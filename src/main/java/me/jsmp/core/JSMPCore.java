@@ -112,7 +112,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         generateWorthCatalogue();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "jsmpmoney")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
