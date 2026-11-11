@@ -320,7 +320,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
         int added = 0;
         boolean removed = false;
-        boolean applyPriceIncrease = !getConfig().getBoolean("economy.high-price-migration-v1", false);
+        boolean applyLowValuePriceUpdate = !getConfig().getBoolean("economy.low-value-price-migration-v2", false);
         double minimumPrice = 1001.0;
         ConfigurationSection existing = worth.getConfigurationSection("items");
         if (existing != null) {
@@ -341,23 +341,31 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 continue;
             }
             if (!worth.contains(path + ".price")) {
-                double price = Math.max(minimumPrice, defaultWorth(material) * 1000.0);
+                double price = defaultWorth(material) <= 5.0
+                        ? lowValuePrice(material) : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
                 worth.set(path + ".price", price);
                 worth.set(path + ".sellable", true);
                 added++;
             } else {
                 double currentPrice = worth.getDouble(path + ".price", 0.0);
-                if (applyPriceIncrease) currentPrice *= 1000.0;
-                worth.set(path + ".price", Math.max(minimumPrice, currentPrice));
+                if (applyLowValuePriceUpdate && defaultWorth(material) <= 5.0) {
+                    currentPrice = lowValuePrice(material);
+                }
+                worth.set(path + ".price", Math.max(0.01, currentPrice));
                 if (!worth.contains(path + ".sellable")) worth.set(path + ".sellable", true);
             }
         }
-        if (applyPriceIncrease) {
-            getConfig().set("economy.high-price-migration-v1", true);
+        if (applyLowValuePriceUpdate) {
+            getConfig().set("economy.low-value-price-migration-v2", true);
             saveConfig();
         }
-        if (added > 0 || removed || applyPriceIncrease || !worthFile.exists()) saveWorth();
-        getLogger().info("Worth catalogue ready; added " + added + " new materials. Minimum base item price: $1,001.");
+        if (added > 0 || removed || applyLowValuePriceUpdate || !worthFile.exists()) saveWorth();
+        getLogger().info("Worth catalogue ready; low-value items priced at $40-$60 and premium items retain high prices.");
+    }
+
+    private double lowValuePrice(Material material) {
+        // Everyday blocks, basic resources and ordinary food should be affordable.
+        return defaultWorth(material) <= 2.0 ? 40.0 : 60.0;
     }
 
     private double defaultWorth(Material material) {
