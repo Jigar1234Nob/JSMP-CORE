@@ -1,0 +1,48 @@
+# Merge this anticheat.anti-xray section into config/paper-world-defaults.yml.
+# Paper's native engine obfuscates ore blocks and container blocks in chunk data.
+anticheat:
+  anti-xray:
+    enabled: true
+    engine-mode: 2
+    hidden-blocks:
+      - copper_ore
+      - deepslate_copper_ore
+      - raw_copper_block
+      - diamond_ore
+      - deepslate_diamond_ore
+      - emerald_ore
+      - deepslate_emerald_ore
+      - gold_ore
+      - deepslate_gold_ore
+      - iron_ore
+      - deepslate_iron_ore
+      - raw_iron_block
+      - lapis_ore
+      - deepslate_lapis_ore
+      - redstone_ore
+      - deepslate_redstone_ore
+      - coal_ore
+      - deepslate_coal_ore
+    replacement-blocks:
+      - stone
+      - deepslate
+      - tuff
+      - andesite
+      - diorite
+      - granite
+      - dirt
+      - gravel
+      - chest
+      - trapped_chest
+      - ender_chest
+      - barrel
+    lava-obscures: false
+    max-block-height: 64
+    update-radius: 2
+    use-permission: false
+
+# IMPORTANT:
+# - Merge this section; do not replace your entire Paper config file with this snippet.
+# - Restart Paper after changing this setting. /reload is not supported.
+# - Chest obfuscation applies to buried/covered containers. Chests exposed to air may still be visible.
+# - Engine mode 2 is stronger than mode 1 but uses more CPU during chunk generation/sending.
