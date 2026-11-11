@@ -54,3 +54,7 @@ permissions:
     default: op
   jsmp.god:
     default: op
+  jsmp.anticheat.alert:
+    default: op
+  jsmp.anticheat.bypass:
+    default: op
