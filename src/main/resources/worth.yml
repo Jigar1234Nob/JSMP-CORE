@@ -1,6 +1,7 @@
-# JSMPCore item prices.
+# Curated JSMPCore shop prices.
+# Blocks remain available. Only common resources, farming supplies and food are included alongside blocks.
+# Netherite, weapons, armour, tools, potions and rare or unnecessary items are excluded.
 # Prices below are base values. economy.price-multiplier in config.yml applies to buying, selling and lore.
-# Rare special items (Elytra, Totems, Nether Stars, Shulker Boxes, etc.) are automatically disabled.
 # Set sellable to false or price to 0.0 to disable buying and selling.
 items:
   DIAMOND:
@@ -8,9 +9,6 @@ items:
     sellable: true
   EMERALD:
     price: 60.0
-    sellable: true
-  NETHERITE_INGOT:
-    price: 250.0
     sellable: true
   DIRT:
     price: 0.25
