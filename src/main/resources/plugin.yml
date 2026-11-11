@@ -36,6 +36,13 @@ commands:
   ungod:
     description: Disables admin invulnerability.
     usage: /ungod
+  rtp:
+    description: Teleports you to a random safe location.
+    usage: /rtp
+  maintenance:
+    aliases: [maintanence]
+    description: Toggles server maintenance mode.
+    usage: /maintenance [on|off|toggle]
 
 permissions:
   jsmp.shop:
@@ -58,15 +65,6 @@ permissions:
     default: op
   jsmp.anticheat.bypass:
     default: op
-
-  rtp:
-    description: Teleports you to a random safe location.
-    usage: /rtp
-  maintenance:
-    aliases: [maintanence]
-    description: Toggles server maintenance mode.
-    usage: /maintenance [on|off|toggle]
-
   jsmp.rtp:
     default: true
   jsmp.maintenance:
