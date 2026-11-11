@@ -321,6 +321,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         int added = 0;
         boolean removed = false;
         boolean applyLowValuePriceUpdate = !getConfig().getBoolean("economy.low-value-price-migration-v2", false);
+        boolean applyBuySellPriceMigration = !getConfig().getBoolean("economy.buy-sell-price-migration-v1", false);
         double minimumPrice = 1001.0;
         ConfigurationSection existing = worth.getConfigurationSection("items");
         if (existing != null) {
@@ -336,31 +337,54 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             if (!isShopCatalogueItem(material)) continue;
             String path = "items." + material.name();
             if (isRestrictedShopItem(material)) {
-                worth.set(path + ".price", minimumPrice);
+                worth.set(path + ".buy-price", minimumPrice);
+                worth.set(path + ".sell-price", 0.0);
                 worth.set(path + ".sellable", false);
+                worth.set(path + ".price", null);
                 continue;
             }
-            if (!worth.contains(path + ".price")) {
-                double price = defaultWorth(material) <= 5.0
-                        ? lowValuePrice(material) : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
-                worth.set(path + ".price", price);
-                worth.set(path + ".sellable", true);
-                added++;
+
+            double oldPrice = worth.getDouble(path + ".price", -1.0);
+            double buyPrice;
+            if (worth.contains(path + ".buy-price")) {
+                buyPrice = worth.getDouble(path + ".buy-price");
+            } else if (oldPrice >= 0) {
+                buyPrice = oldPrice;
             } else {
-                double currentPrice = worth.getDouble(path + ".price", 0.0);
-                if (applyLowValuePriceUpdate && defaultWorth(material) <= 5.0) {
-                    currentPrice = lowValuePrice(material);
-                }
-                worth.set(path + ".price", Math.max(0.01, currentPrice));
-                if (!worth.contains(path + ".sellable")) worth.set(path + ".sellable", true);
+                buyPrice = defaultWorth(material) <= 5.0
+                        ? lowValuePrice(material) : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
+                added++;
             }
+
+            if (applyLowValuePriceUpdate && defaultWorth(material) <= 5.0) {
+                buyPrice = lowValuePrice(material);
+            }
+            buyPrice = Math.max(0.01, buyPrice);
+
+            double sellPrice;
+            if (worth.contains(path + ".sell-price")) {
+                sellPrice = worth.getDouble(path + ".sell-price");
+            } else if (applyBuySellPriceMigration) {
+                sellPrice = buyPrice * Math.max(0.0, getConfig().getDouble("economy.default-sell-rate", 0.5));
+            } else {
+                sellPrice = buyPrice * 0.5;
+            }
+
+            worth.set(path + ".buy-price", roundMoney(buyPrice));
+            worth.set(path + ".sell-price", roundMoney(Math.max(0.0, Math.min(sellPrice, buyPrice))));
+            worth.set(path + ".price", null);
+            if (!worth.contains(path + ".sellable")) worth.set(path + ".sellable", true);
         }
+
         if (applyLowValuePriceUpdate) {
             getConfig().set("economy.low-value-price-migration-v2", true);
-            saveConfig();
         }
-        if (added > 0 || removed || applyLowValuePriceUpdate || !worthFile.exists()) saveWorth();
-        getLogger().info("Worth catalogue ready; low-value items priced at $40-$60 and premium items retain high prices.");
+        if (applyBuySellPriceMigration) {
+            getConfig().set("economy.buy-sell-price-migration-v1", true);
+        }
+        if (applyLowValuePriceUpdate || applyBuySellPriceMigration) saveConfig();
+        if (added > 0 || removed || applyLowValuePriceUpdate || applyBuySellPriceMigration || !worthFile.exists()) saveWorth();
+        getLogger().info("Worth catalogue ready with separate buy and sell prices.");
     }
 
     private double lowValuePrice(Material material) {
@@ -489,17 +513,26 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         ).contains(material.name());
     }
 
-    private double worth(Material material) {
+    private double buyPrice(Material material) {
         if (isRestrictedShopItem(material)) return 0;
         String path = "items." + material.name();
         if (!worth.getBoolean(path + ".sellable", false)) return 0;
-        double basePrice = Math.max(0, worth.getDouble(path + ".price", 0));
-        double multiplier = Math.max(0, getConfig().getDouble("economy.price-multiplier", 3.0));
-        return roundMoney(basePrice * multiplier);
+        return roundMoney(Math.max(0, worth.getDouble(path + ".buy-price", 0)));
+    }
+
+    private double sellPrice(Material material) {
+        if (isRestrictedShopItem(material)) return 0;
+        String path = "items." + material.name();
+        if (!worth.getBoolean(path + ".sellable", false)) return 0;
+        return roundMoney(Math.max(0, worth.getDouble(path + ".sell-price", 0)));
+    }
+
+    private double worth(Material material) {
+        return sellPrice(material);
     }
 
     private boolean isSellable(ItemStack item) {
-        return item != null && !item.getType().isAir() && worth(item.getType()) > 0;
+        return item != null && !item.getType().isAir() && sellPrice(item.getType()) > 0;
     }
 
     private ShopCategory categoryFor(Material material) {
@@ -549,9 +582,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             String stripped = ChatColor.stripColor(line);
             return stripped != null && stripped.startsWith("Worth: ");
         });
-        double value = worth(stack.getType());
-        if (value > 0) {
-            String worthLine = color("&7Worth: &a" + money(value) + " &8each");
+        double buyValue = buyPrice(stack.getType());
+        double sellValue = sellPrice(stack.getType());
+        if (buyValue > 0 || sellValue > 0) {
+            String worthLine = color("&7Buy: &e" + money(buyValue) + " &8| &7Sell: &a" + money(sellValue) + " &8each");
             if (lore.contains(worthLine)) return;
             lore.add(worthLine);
             meta.setLore(lore);
@@ -589,7 +623,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
             if (!isShopCatalogueItem(material) || categoryFor(material) != category) continue;
-            if (worth(material) <= 0) continue;
+            if (buyPrice(material) <= 0) continue;
             items.add(material);
         }
         items.sort(Comparator.comparing(Material::name));
@@ -610,6 +644,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             ItemMeta meta = stack.getItemMeta();
             if (meta != null) {
                 List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+                lore.add(color("&7Buy: &e" + money(buyPrice(material)) + " &8each"));
+                lore.add(color("&7Sell: &a" + money(sellPrice(material)) + " &8each"));
                 lore.add(color("&eClick to buy 1"));
                 lore.add(color("&7Shift-click to buy a stack"));
                 meta.setLore(lore);
@@ -635,7 +671,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void buy(Player player, Material material, int amount) {
-        double unitPrice = worth(material);
+        double unitPrice = buyPrice(material);
         if (unitPrice <= 0) {
             msg(player, "&cThis item is not currently available.");
             return;
@@ -677,7 +713,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         for (int slot = 0; slot < 45; slot++) {
             ItemStack item = inventory.getItem(slot);
             if (item == null || item.getType().isAir()) continue;
-            double unit = worth(item.getType());
+            double unit = sellPrice(item.getType());
             if (unit <= 0 || !worth.getBoolean("items." + item.getType().name() + ".sellable", false)) continue;
             total += unit * item.getAmount() * multiplier;
             soldStacks++;
