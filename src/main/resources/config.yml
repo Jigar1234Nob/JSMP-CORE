@@ -41,7 +41,7 @@ anti-cheat:
 rtp:
   world: "world"
   min-radius: 500
-  max-radius: 10000
+  max-radius: 0
   border-margin: 16
   attempts: 32
 
