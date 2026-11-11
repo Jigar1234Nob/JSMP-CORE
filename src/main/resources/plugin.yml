@@ -4,6 +4,7 @@ main: me.jsmp.core.JSMPCore
 api-version: '26.3'
 description: JSMP server shop, item worth and player economy.
 authors: [Jigar]
+softdepend: [PlaceholderAPI]
 website: https://github.com/Jigar1234Nob/JSMP-CORE
 
 commands:
