@@ -1,21 +1,24 @@
 # Curated JSMPCore shop prices.
-# Everyday blocks, basic resources and ordinary food are priced at $40-$60.
-# Valuable materials remain expensive. Restricted admin-only items stay disabled.
-# Prices are final shop prices; the economy multiplier is set to 1.0.
-# Set sellable to false or price to 0.0 to disable buying and selling.
+# Buy and sell prices are stored separately. Sell prices default to 50% of buy prices.
+# Set sellable to false or both prices to 0.0 to disable buying and selling.
 items:
   DIAMOND:
-    price: 90000.0
+    buy-price: 90000.0
+    sell-price: 45000.0
     sellable: true
   EMERALD:
-    price: 60000.0
+    buy-price: 60000.0
+    sell-price: 30000.0
     sellable: true
   DIRT:
-    price: 40.0
+    buy-price: 40.0
+    sell-price: 20.0
     sellable: true
   BEDROCK:
-    price: 1001.0
+    buy-price: 1001.0
+    sell-price: 0.0
     sellable: false
   BARRIER:
-    price: 1001.0
+    buy-price: 1001.0
+    sell-price: 0.0
     sellable: false
