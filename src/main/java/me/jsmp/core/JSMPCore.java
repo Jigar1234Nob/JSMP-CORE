@@ -177,6 +177,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            new JSMPCoreExpansion(this).register();
+            getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
+        }
         for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
@@ -462,6 +466,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             balances.put(uuid, Math.max(0, getConfig().getDouble("currency.starting-balance", 100.0)));
         }
         saveBalances();
+    }
+
+    public String getBalancePlaceholder(UUID uuid) {
+        return money(balance(uuid));
     }
 
     private double balance(UUID uuid) {
