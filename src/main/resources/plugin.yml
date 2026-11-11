@@ -36,6 +36,9 @@ commands:
   ungod:
     description: Disables admin invulnerability.
     usage: /ungod
+  afk:
+    description: Toggles AFK mode and earns $1,000 per completed minute.
+    usage: /afk
   rtp:
     description: Teleports you to a random safe location.
     usage: /rtp
