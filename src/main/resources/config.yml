@@ -15,11 +15,12 @@ sell:
   unknown-items-sellable: false
 
 economy:
-  # Multiplies every configured worth price for shop purchases, selling and item lore.
-  price-multiplier: 1.0
+  # Default sell price as a fraction of the buy price for migrated/new items.
+  default-sell-rate: 0.5
   # Internal migration markers. Keep true for new installations.
   high-price-migration-v1: true
   low-value-price-migration-v2: true
+  buy-sell-price-migration-v1: true
   baltop-size: 10
   minimum-payment: 0.01
 
