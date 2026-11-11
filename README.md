@@ -15,11 +15,12 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - Item worth shown in item hover lore, including items newly picked up or added to player inventories.
 - `/balance [player]`, `/baltop`, `/pay <player> <amount>`.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
-- Player balances are stored persistently in `plugins/JSMPCore/economy.db` (SQLite). Existing balances in `players.yml` are imported automatically on the first database startup; named homes remain in `players.yml`.
+- Player balances are stored persistently in `plugins/JSMPCore/economy.db` (SQLite). Existing balances in `players.yml` are imported automatically on the first database startup; named homes are stored persistently in the `homes` table in `economy.db`, with existing `players.yml` homes imported automatically.
 - `/vanish` toggles admin visibility, including hiding vanished admins from players who join later.
 - `/god` and `/ungod` toggle admin invulnerability.
 - `/rtp` teleports players to a random safe location within the configured world border after a 3-second chat/title countdown; RTP applies brief blindness and displays live coordinates in the action bar.
-- `/sethome <name>` saves unlimited named homes per player; `/home <name>` teleports to a saved home after the same 3-second countdown. `/home` lists saved homes.
+- `/sethome <name>` saves unlimited named homes per player in SQLite (`economy.db`); `/home <name>` teleports to a saved home after the same 3-second countdown. `/home` lists saved homes.
+- Every shop item has a base price of at least `$1,001`; the configured economy multiplier is applied on top.
 - `/jsmp reload` reloads the plugin config and worth catalogue without restarting Paper.
 - `/maintenance [on|off|toggle]` blocks new logins except operators and explicitly whitelisted players, and changes the server-list MOTD to orange `Server under maintenance`.
 - Lightweight server-side anti-cheat checks for suspicious reach and unusually fast block breaking, with staff alerts and configurable flag thresholds.
