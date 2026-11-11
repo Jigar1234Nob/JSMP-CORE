@@ -17,6 +17,8 @@ sell:
 economy:
   # Multiplies every configured worth price for shop purchases, selling and item lore.
   price-multiplier: 3.0
+  # Internal migration marker. Keep true for new installations.
+  high-price-migration-v1: true
   baltop-size: 10
   minimum-payment: 0.01
 
