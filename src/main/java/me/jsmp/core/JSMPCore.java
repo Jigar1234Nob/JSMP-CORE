@@ -285,12 +285,20 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 "OBSERVER", "HOPPER", "DISPENSER", "DROPPER", "TARGET", "LEVER", "TRIPWIRE_HOOK",
                 "DAYLIGHT_DETECTOR", "NOTE_BLOCK", "SCULK_SENSOR", "CALIBRATED_SCULK_SENSOR").contains(n)
                 || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE;
+        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE") || n.endsWith("_SHOVEL")
+                || n.endsWith("_HOE") || n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE")
+                || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS") || n.endsWith("_BOW")
+                || n.endsWith("_CROSSBOW") || n.equals("TRIDENT") || n.equals("MACE") || n.equals("SHIELD")
+                || n.equals("WOLF_ARMOR") || n.equals("FISHING_ROD") || n.contains("ARROW")
+                || n.contains("TNT") || n.contains("FIREWORK") || n.contains("TOTEM")
+                || n.contains("CHARGE") || n.contains("SHEARS") || n.equals("FLINT_AND_STEEL"))
+            return ShopCategory.ARSENAL;
         if (n.contains("DIAMOND") || n.contains("EMERALD") || n.contains("AMETHYST")
                 || n.contains("LAPIS") || n.contains("RAW_IRON") || n.contains("RAW_GOLD")
                 || n.contains("RAW_COPPER") || n.equals("GOLD_INGOT") || n.equals("IRON_INGOT")
                 || n.equals("COPPER_INGOT") || n.equals("NETHERITE_INGOT") || n.equals("NETHERITE_SCRAP"))
             return ShopCategory.GEMS;
-        if (n.contains("NETHER") || n.contains("CRIMSON") || n.contains("WARPED")
+        if ((!n.contains("NETHERITE") && n.contains("NETHER")) || n.contains("CRIMSON") || n.contains("WARPED")
                 || n.contains("BASALT") || n.contains("BLACKSTONE") || n.contains("SOUL_")
                 || n.contains("GLOWSTONE") || n.contains("MAGMA") || n.contains("QUARTZ"))
             return ShopCategory.NETHER;
