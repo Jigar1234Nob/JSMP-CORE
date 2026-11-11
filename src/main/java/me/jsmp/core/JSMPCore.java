@@ -48,6 +48,12 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -67,6 +73,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private File worthFile;
     private File playersFile;
+    private File economyDatabaseFile;
+    private Connection economyDatabase;
     private FileConfiguration worth;
     private FileConfiguration playerData;
     private final Map<UUID, Double> balances = new LinkedHashMap<>();
@@ -136,6 +144,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
         worth = YamlConfiguration.loadConfiguration(worthFile);
         playerData = YamlConfiguration.loadConfiguration(playersFile);
+        economyDatabaseFile = new File(getDataFolder(), "economy.db");
+        openEconomyDatabase();
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
         generateWorthCatalogue();
@@ -168,33 +178,125 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
         saveBalances();
         saveWorth();
+        closeEconomyDatabase();
         if (originalMotd != null) Bukkit.setMotd(originalMotd);
     }
 
-    private void loadBalances() {
-        ConfigurationSection section = playerData.getConfigurationSection("players");
-        if (section == null) return;
-        for (String id : section.getKeys(false)) {
-            try {
-                UUID uuid = UUID.fromString(id);
-                balances.put(uuid, Math.max(0, section.getDouble(id + ".balance", 0)));
-                playerNames.put(uuid, section.getString(id + ".name", "Unknown"));
-            } catch (IllegalArgumentException ignored) {
-                getLogger().warning("Skipping invalid player UUID in players.yml: " + id);
+    private void openEconomyDatabase() {
+        try {
+            if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+                throw new IOException("Could not create plugin data directory");
             }
+            economyDatabase = DriverManager.getConnection("jdbc:sqlite:" + economyDatabaseFile.getAbsolutePath());
+            try (Statement statement = economyDatabase.createStatement()) {
+                statement.execute("PRAGMA journal_mode=WAL");
+                statement.execute("PRAGMA synchronous=FULL");
+                statement.execute("""
+                        CREATE TABLE IF NOT EXISTS balances (
+                            uuid TEXT PRIMARY KEY NOT NULL,
+                            player_name TEXT NOT NULL,
+                            balance REAL NOT NULL CHECK(balance >= 0)
+                        )
+                        """);
+            }
+            getLogger().info("Economy database opened: " + economyDatabaseFile.getName());
+        } catch (SQLException | IOException exception) {
+            getLogger().severe("Could not open economy.db: " + exception.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+        }
+    }
+
+    private void loadBalances() {
+        if (economyDatabase == null) return;
+        try {
+            boolean databaseHasBalances;
+            try (Statement statement = economyDatabase.createStatement();
+                 ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM balances")) {
+                databaseHasBalances = result.next() && result.getInt(1) > 0;
+            }
+
+            if (databaseHasBalances) {
+                try (Statement statement = economyDatabase.createStatement();
+                     ResultSet result = statement.executeQuery("SELECT uuid, player_name, balance FROM balances")) {
+                    while (result.next()) {
+                        try {
+                            UUID uuid = UUID.fromString(result.getString("uuid"));
+                            balances.put(uuid, Math.max(0, result.getDouble("balance")));
+                            playerNames.put(uuid, result.getString("player_name"));
+                        } catch (IllegalArgumentException ignored) {
+                            getLogger().warning("Skipping invalid player UUID in economy.db.");
+                        }
+                    }
+                }
+                getLogger().info("Loaded " + balances.size() + " balances from economy.db.");
+                return;
+            }
+
+            // One-time migration: retain balances from the old players.yml file.
+            ConfigurationSection section = playerData.getConfigurationSection("players");
+            if (section != null) {
+                for (String id : section.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(id);
+                        balances.put(uuid, Math.max(0, section.getDouble(id + ".balance", 0)));
+                        playerNames.put(uuid, section.getString(id + ".name", "Unknown"));
+                    } catch (IllegalArgumentException ignored) {
+                        getLogger().warning("Skipping invalid player UUID in players.yml: " + id);
+                    }
+                }
+            }
+            saveBalances();
+            getLogger().info("Imported " + balances.size() + " existing balances into economy.db.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not load balances from economy.db: " + exception.getMessage());
         }
     }
 
     private void saveBalances() {
-        playerData.set("players", null);
-        for (UUID uuid : balances.keySet()) {
-            playerData.set("players." + uuid + ".balance", roundMoney(balances.getOrDefault(uuid, 0.0)));
-            playerData.set("players." + uuid + ".name", playerNames.getOrDefault(uuid, "Unknown"));
+        if (economyDatabase == null) {
+            getLogger().severe("Economy database is unavailable; balances were not saved.");
+            return;
         }
         try {
+            economyDatabase.setAutoCommit(false);
+            try (PreparedStatement statement = economyDatabase.prepareStatement(
+                    "INSERT INTO balances (uuid, player_name, balance) VALUES (?, ?, ?) "
+                            + "ON CONFLICT(uuid) DO UPDATE SET player_name=excluded.player_name, balance=excluded.balance")) {
+                for (UUID uuid : balances.keySet()) {
+                    statement.setString(1, uuid.toString());
+                    statement.setString(2, playerNames.getOrDefault(uuid, "Unknown"));
+                    statement.setDouble(3, roundMoney(balances.getOrDefault(uuid, 0.0)));
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+            economyDatabase.commit();
+            economyDatabase.setAutoCommit(true);
+
+            // Keep the old YAML balance mirror for compatibility, without touching homes.
+            for (UUID uuid : balances.keySet()) {
+                playerData.set("players." + uuid + ".balance", roundMoney(balances.getOrDefault(uuid, 0.0)));
+                playerData.set("players." + uuid + ".name", playerNames.getOrDefault(uuid, "Unknown"));
+            }
             playerData.save(playersFile);
-        } catch (IOException exception) {
-            getLogger().severe("Could not save players.yml: " + exception.getMessage());
+        } catch (SQLException | IOException exception) {
+            try {
+                economyDatabase.rollback();
+                economyDatabase.setAutoCommit(true);
+            } catch (SQLException rollbackException) {
+                getLogger().severe("Could not roll back economy database transaction: " + rollbackException.getMessage());
+            }
+            getLogger().severe("Could not save player balances: " + exception.getMessage());
+        }
+    }
+
+    private void closeEconomyDatabase() {
+        if (economyDatabase == null) return;
+        try {
+            economyDatabase.close();
+            economyDatabase = null;
+        } catch (SQLException exception) {
+            getLogger().severe("Could not close economy.db cleanly: " + exception.getMessage());
         }
     }
 
