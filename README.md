@@ -17,8 +17,16 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
 - `/vanish` toggles admin visibility, including hiding vanished admins from players who join later.
 - `/god` and `/ungod` toggle admin invulnerability.
+- Lightweight server-side anti-cheat checks for suspicious reach and unusually fast block breaking, with staff alerts and configurable flag thresholds.
+- Paper anti-xray and buried-container obfuscation configuration examples in `docs/`.
 - YAML-backed balances, saved by UUID.
 - GitHub Actions build workflow for Paper 26.3.
+
+## Anti-cheat and anti-xray
+
+JSMPCore includes basic server-side checks for unusually long melee reach and abnormal block-break rates. Staff with `jsmp.anticheat.alert` receive alerts; `jsmp.anticheat.bypass` bypasses checks. Configure thresholds and whether repeated flags kick players in `plugins/JSMPCore/config.yml`. Movement checking is opt-in because knockback, latency and gameplay effects can cause false positives. This is a lightweight layer, not a complete packet-level anti-cheat.
+
+Paper's native anti-xray is used for ore and buried-container obfuscation. Merge the example in `docs/paper-antixray-overworld.yml` into `config/paper-world-defaults.yml`, and the Nether example into that world's `paper-world.yml`. Do not replace your entire config files. Restart Paper after changing anti-xray settings; `/reload` will not apply them. Paper cannot reliably hide containers that are exposed to air, and no server-side plugin can guarantee detection of every client-side ESP implementation.
 
 ## Build
 Run `gradle clean build` with JDK 25. The plugin jar is created in `build/libs/`.
