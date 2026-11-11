@@ -22,7 +22,14 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.GameMode;
-import org.bukkit.util.Vector;
+import org.bukkit.World;
+import org.bukkit.WorldBorder;
+import org.bukkit.Location;
+import org.bukkit.HeightMap;
+import org.bukkit.block.Block;
+import org.bukkit.event.player.PlayerLoginEvent;
+import org.bukkit.event.server.ServerListPingEvent;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
@@ -66,6 +73,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private final Map<UUID, Long> lastAntiCheatFlag = new HashMap<>();
     private final Map<UUID, Long> breakWindowStart = new HashMap<>();
     private final Map<UUID, Integer> breakWindowCount = new HashMap<>();
+    private boolean maintenanceEnabled;
+    private String originalMotd;
     private NamespacedKey worthLoreKey;
 
     private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
@@ -94,11 +103,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         FARMING("Farming", Material.WHEAT, "Crops, seeds and farming supplies"),
         FOOD("Food", Material.COOKED_BEEF, "Edible items"),
         NETHER("Nether", Material.NETHERRACK, "Nether blocks and materials"),
-        ARSENAL("Arsenal", Material.IRON_SWORD, "Weapons, armour, tools and consumables"),
-        ALCHEMY("Alchemy", Material.POTION, "Drinkable potions only"),
         REDSTONE("Redstone Lab", Material.REDSTONE, "Redstone components and machines"),
-        WORKSTATIONS("Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations"),
-        GENERAL("General Supplies", Material.BUNDLE, "Everything else");
+        WORKSTATIONS("Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations");
 
         final String label;
         final Material icon;
@@ -128,9 +134,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
         generateWorthCatalogue();
+        originalMotd = Bukkit.getMotd();
+        maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
+        applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
@@ -186,8 +195,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void generateWorthCatalogue() {
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
         int added = 0;
+        ConfigurationSection existing = worth.getConfigurationSection("items");
+        if (existing != null) {
+            for (String key : new ArrayList<>(existing.getKeys(false))) {
+                Material material = Material.matchMaterial(key);
+                if (!isShopCatalogueItem(material)) worth.set("items." + key, null);
+            }
+        }
         for (Material material : Material.values()) {
-            if (!material.isItem() || material.isAir()) continue;
+            if (!isShopCatalogueItem(material)) continue;
             String path = "items." + material.name();
             if (isRestrictedShopItem(material)) {
                 worth.set(path + ".price", 0.0);
@@ -212,7 +228,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (List.of("BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK", "REPEATING_COMMAND_BLOCK",
                 "STRUCTURE_BLOCK", "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK",
                 "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n)) return 0.0;
-        if (n.contains("NETHERITE")) return 250.0;
+        if (n.contains("NETHERITE")) return 0.0;
         if (n.contains("ANCIENT_DEBRIS")) return 180.0;
         if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) return n.endsWith("_BLOCK") ? 900.0 : 90.0;
         if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) return n.endsWith("_BLOCK") ? 600.0 : 60.0;
@@ -300,12 +316,32 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private boolean isRestrictedShopItem(Material material) {
         String n = material.name();
+        if (n.contains("NETHERITE")) return true;
         return n.equals("ELYTRA") || n.equals("DRAGON_EGG") || n.equals("DRAGON_HEAD")
                 || n.equals("DRAGON_WALL_HEAD") || n.equals("NETHER_STAR") || n.equals("BEACON")
                 || n.equals("TOTEM_OF_UNDYING") || n.equals("SHULKER_SHELL") || n.startsWith("SHULKER_BOX")
                 || n.equals("END_CRYSTAL") || n.equals("SPAWNER") || n.equals("ENCHANTED_GOLDEN_APPLE")
                 || n.equals("TRIDENT") || n.equals("MACE") || n.equals("WITHER_SKELETON_SKULL")
                 || n.equals("WITHER_SKELETON_WALL_SKULL");
+    }
+
+    private boolean isShopCatalogueItem(Material material) {
+        if (material == null || !material.isItem() || material.isAir() || isRestrictedShopItem(material)) return false;
+        if (material.isBlock()) return true;
+
+        // Keep useful resources, farming supplies and food. Gear, weapons, armour,
+        // potions and novelty items are intentionally not part of this shop.
+        return List.of(
+                "DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
+                "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
+                "REDSTONE", "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD",
+                "WHEAT", "WHEAT_SEEDS", "CARROT", "POTATO", "BEETROOT",
+                "BEETROOT_SEEDS", "MELON_SLICE", "MELON_SEEDS", "PUMPKIN_SEEDS",
+                "SUGAR_CANE", "BAMBOO", "COCOA_BEANS",
+                "APPLE", "BREAD", "COOKED_BEEF", "COOKED_PORKCHOP",
+                "COOKED_CHICKEN", "COOKED_MUTTON", "COOKED_RABBIT",
+                "BAKED_POTATO", "GOLDEN_CARROT"
+        ).contains(material.name());
     }
 
     private double worth(Material material) {
@@ -323,30 +359,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private ShopCategory categoryFor(Material material) {
         String n = material.name();
-        if (n.equals("POTION")) return ShopCategory.ALCHEMY;
         if (n.contains("REDSTONE") || List.of("REPEATER", "COMPARATOR", "PISTON", "STICKY_PISTON",
                 "OBSERVER", "HOPPER", "DISPENSER", "DROPPER", "TARGET", "LEVER", "TRIPWIRE_HOOK",
                 "DAYLIGHT_DETECTOR", "NOTE_BLOCK", "SCULK_SENSOR", "CALIBRATED_SCULK_SENSOR").contains(n)
                 || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE;
-        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE") || n.endsWith("_SHOVEL")
-                || n.endsWith("_HOE") || n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE")
-                || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS") || n.endsWith("_BOW")
-                || n.endsWith("_CROSSBOW") || n.equals("TRIDENT") || n.equals("MACE") || n.equals("SHIELD")
-                || n.equals("WOLF_ARMOR") || n.equals("FISHING_ROD") || n.contains("ARROW")
-                || n.contains("TNT") || n.contains("FIREWORK") || n.contains("TOTEM")
-                || n.contains("CHARGE") || n.contains("SHEARS") || n.equals("FLINT_AND_STEEL")
-                || n.equals("ENDER_PEARL") || n.equals("ENDER_EYE") || n.equals("WIND_CHARGE")
-                || n.equals("BREEZE_ROD") || n.equals("SNOWBALL") || n.equals("EGG"))
-            return ShopCategory.ARSENAL;
-        if (n.contains("DIAMOND") || n.contains("EMERALD") || n.contains("AMETHYST")
-                || n.contains("LAPIS") || n.contains("RAW_IRON") || n.contains("RAW_GOLD")
-                || n.contains("RAW_COPPER") || n.equals("GOLD_INGOT") || n.equals("IRON_INGOT")
-                || n.equals("COPPER_INGOT") || n.equals("NETHERITE_INGOT") || n.equals("NETHERITE_SCRAP"))
-            return ShopCategory.GEMS;
-        if ((!n.contains("NETHERITE") && n.contains("NETHER")) || n.contains("CRIMSON") || n.contains("WARPED")
+        if (List.of("DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
+                "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
+                "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD").contains(n)
+                || n.contains("DIAMOND_ORE") || n.contains("EMERALD_ORE")) return ShopCategory.GEMS;
+        if (n.contains("NETHER") || n.contains("CRIMSON") || n.contains("WARPED")
                 || n.contains("BASALT") || n.contains("BLACKSTONE") || n.contains("SOUL_")
-                || n.contains("GLOWSTONE") || n.contains("MAGMA") || n.contains("QUARTZ"))
-            return ShopCategory.NETHER;
+                || n.contains("GLOWSTONE") || n.contains("MAGMA")) return ShopCategory.NETHER;
         if (n.contains("SEEDS") || n.contains("SAPLING") || n.contains("WHEAT") || n.contains("CARROT")
                 || n.contains("POTATO") || n.contains("BEETROOT") || n.contains("MELON") || n.contains("PUMPKIN")
                 || n.contains("SUGAR_CANE") || n.contains("BAMBOO") || n.contains("COCOA")
@@ -354,19 +377,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 || n.contains("MOSS") || n.contains("FLOWER") || n.contains("TULIP") || n.contains("LILY"))
             return ShopCategory.FARMING;
         if (material.isEdible()) return ShopCategory.FOOD;
-        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE") || n.endsWith("_SHOVEL")
-                || n.endsWith("_HOE") || n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE")
-                || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS") || n.endsWith("_BOW")
-                || n.endsWith("_CROSSBOW") || n.equals("TRIDENT") || n.equals("MACE") || n.equals("SHIELD")
-                || n.contains("ARROW") || n.contains("TNT") || n.contains("FIREWORK") || n.contains("TOTEM")
-                || n.contains("CHARGE") || n.contains("SHEARS") || n.equals("FLINT_AND_STEEL"))
-            return ShopCategory.ARSENAL;
         if (List.of("CRAFTING_TABLE", "FURNACE", "BLAST_FURNACE", "SMOKER", "ANVIL", "CHIPPED_ANVIL",
                 "DAMAGED_ANVIL", "ENCHANTING_TABLE", "BREWING_STAND", "SMITHING_TABLE", "GRINDSTONE",
                 "STONECUTTER", "CARTOGRAPHY_TABLE", "FLETCHING_TABLE", "LOOM", "LECTERN", "BARREL",
-                "COMPOSTER", "ENDER_CHEST", "BEACON").contains(n)) return ShopCategory.WORKSTATIONS;
-        if (material.isBlock()) return ShopCategory.BLOCKS;
-        return ShopCategory.GENERAL;
+                "COMPOSTER", "ENDER_CHEST").contains(n)) return ShopCategory.WORKSTATIONS;
+        return ShopCategory.BLOCKS;
     }
 
     private ItemStack icon(Material material, String name, List<String> lore) {
@@ -428,8 +443,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void openShopItems(Player player, ShopCategory category, int page) {
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
-            if (!material.isItem() || material.isAir() || material == Material.SPLASH_POTION
-                    || material == Material.LINGERING_POTION || categoryFor(material) != category) continue;
+            if (!isShopCatalogueItem(material) || categoryFor(material) != category) continue;
             if (worth(material) <= 0) continue;
             items.add(material);
         }
@@ -560,6 +574,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public void onJoin(PlayerJoinEvent event) {
         Player joining = event.getPlayer();
         remember(joining);
+        if (!joining.hasPlayedBefore() && !playerData.getBoolean("rtp.first-join-complete." + joining.getUniqueId(), false)) {
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (joining.isOnline() && randomTeleport(joining)) {
+                    playerData.set("rtp.first-join-complete." + joining.getUniqueId(), true);
+                    saveBalances();
+                    msg(joining, "&aWelcome! You have been randomly teleported to a new location.");
+                } else if (joining.isOnline()) {
+                    msg(joining, "&cCould not find a safe random location. Use /rtp to try again.");
+                }
+            });
+        }
         for (UUID vanishedId : vanishedPlayers) {
             Player vanished = Bukkit.getPlayer(vanishedId);
             if (vanished != null && !vanished.getUniqueId().equals(joining.getUniqueId())) joining.hidePlayer(this, vanished);
@@ -570,6 +595,64 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
         }
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
+    }
+
+    private void applyMaintenanceMotd() {
+        Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
+    }
+
+    @EventHandler
+    public void onMaintenanceLogin(PlayerLoginEvent event) {
+        if (!maintenanceEnabled) return;
+        Player player = event.getPlayer();
+        if (player.isOp() || player.isWhitelisted()) return;
+        event.disallow(PlayerLoginEvent.Result.KICK_OTHER,
+                color("&6Server under maintenance\n&7Please try again later."));
+    }
+
+    @EventHandler
+    public void onMaintenancePing(ServerListPingEvent event) {
+        if (maintenanceEnabled) event.setMotd(color("&6Server under maintenance"));
+    }
+
+    private boolean randomTeleport(Player player) {
+        String worldName = getConfig().getString("rtp.world", "world");
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) world = player.getWorld();
+
+        WorldBorder border = world.getWorldBorder();
+        Location center = border.getCenter();
+        double borderLimit = Math.max(0, border.getSize() / 2.0 - getConfig().getDouble("rtp.border-margin", 16.0));
+        double radius = Math.min(borderLimit, Math.max(1, getConfig().getDouble("rtp.max-radius", 10000.0)));
+        double minRadius = Math.max(0, Math.min(radius, getConfig().getDouble("rtp.min-radius", 500.0)));
+        int attempts = Math.max(1, getConfig().getInt("rtp.attempts", 32));
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
+        for (int attempt = 0; attempt < attempts; attempt++) {
+            double distance = Math.sqrt(random.nextDouble(minRadius * minRadius, radius * radius + 1));
+            double angle = random.nextDouble(0, Math.PI * 2);
+            int x = (int) Math.round(center.getX() + Math.cos(angle) * distance);
+            int z = (int) Math.round(center.getZ() + Math.sin(angle) * distance);
+            Location probe = new Location(world, x + 0.5, world.getMinHeight(), z + 0.5);
+            if (!border.isInside(probe)) continue;
+
+            Block ground = world.getHighestBlockAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+            Material groundType = ground.getType();
+            if (!groundType.isSolid() || ground.isLiquid()
+                    || List.of(Material.MAGMA_BLOCK, Material.CAMPFIRE, Material.SOUL_CAMPFIRE,
+                    Material.CACTUS, Material.FIRE, Material.SOUL_FIRE, Material.POWDER_SNOW).contains(groundType)) continue;
+
+            int y = ground.getY() + 1;
+            if (y + 1 >= world.getMaxHeight()) continue;
+            Block feet = world.getBlockAt(x, y, z);
+            Block head = world.getBlockAt(x, y + 1, z);
+            if (!feet.isPassable() || !head.isPassable() || feet.isLiquid() || head.isLiquid()) continue;
+
+            Location destination = new Location(world, x + 0.5, y, z + 0.5,
+                    random.nextFloat() * 360.0f, 0.0f);
+            if (player.teleport(destination)) return true;
+        }
+        return false;
     }
 
     private boolean bypassAntiCheat(Player player) {
@@ -785,6 +868,31 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if (!sender.hasPermission("jsmp.shop")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open the shop."); return true; }
                 openCategories(player);
+                return true;
+            }
+            case "rtp" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /rtp."); return true; }
+                if (!sender.hasPermission("jsmp.rtp")) { msg(sender, "&cYou do not have permission."); return true; }
+                msg(player, "&eFinding a safe random location...");
+                if (!randomTeleport(player)) msg(player, "&cCould not find a safe location. Try again.");
+                else msg(player, "&aYou have been randomly teleported.");
+                return true;
+            }
+            case "maintenance" -> {
+                if (sender instanceof Player player && !player.isOp()) {
+                    msg(sender, "&cOnly operators can change maintenance mode."); return true;
+                }
+                if (args.length > 1) { msg(sender, "&cUsage: /maintenance [on|off|toggle]"); return true; }
+                String action = args.length == 0 ? "toggle" : args[0].toLowerCase(Locale.ROOT);
+                if (action.equals("toggle")) maintenanceEnabled = !maintenanceEnabled;
+                else if (action.equals("on")) maintenanceEnabled = true;
+                else if (action.equals("off")) maintenanceEnabled = false;
+                else { msg(sender, "&cUsage: /maintenance [on|off|toggle]"); return true; }
+                getConfig().set("maintenance.enabled", maintenanceEnabled);
+                saveConfig();
+                applyMaintenanceMotd();
+                msg(sender, maintenanceEnabled ? "&6Maintenance mode enabled. Only operators and whitelisted players can join."
+                        : "&aMaintenance mode disabled. The server is open to everyone.");
                 return true;
             }
             case "sell" -> {
