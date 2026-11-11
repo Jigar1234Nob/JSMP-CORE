@@ -68,6 +68,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.List;
 import java.util.Locale;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -88,6 +89,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private final Set<UUID> vanishedPlayers = new HashSet<>();
     private final Set<UUID> godPlayers = new HashSet<>();
     private final Map<UUID, AfkSession> afkPlayers = new HashMap<>();
+    private final Map<UUID, BukkitTask> dailyTasks = new HashMap<>();
+    private final Map<UUID, Integer> dailyUnsavedSeconds = new HashMap<>();
     private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
     private final Map<UUID, Integer> antiCheatFlags = new HashMap<>();
     private final Map<UUID, Long> lastAntiCheatFlag = new HashMap<>();
@@ -108,7 +111,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -174,13 +177,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             remember(player);
             decorateInventory(player);
+            startDailyTracking(player);
         }
         getLogger().info("JSMPCore enabled. Loaded " + worth.getConfigurationSection("items").getKeys(false).size()
                 + " item worth entries and " + balances.size() + " player balances.");
@@ -199,6 +203,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
         saveBalances();
         saveWorth();
+        for (UUID uuid : new ArrayList<>(dailyTasks.keySet())) stopDailyTracking(uuid);
         closeEconomyDatabase();
         if (originalMotd != null) Bukkit.setMotd(originalMotd);
     }
@@ -774,6 +779,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public void onJoin(PlayerJoinEvent event) {
         Player joining = event.getPlayer();
         remember(joining);
+        startDailyTracking(joining);
         if (!joining.hasPlayedBefore() && !playerData.getBoolean("rtp.first-join-complete." + joining.getUniqueId(), false)) {
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!joining.isOnline()) return;
@@ -799,8 +805,201 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
     }
 
+    private String dailyPath(UUID uuid) {
+        return "daily.players." + uuid;
+    }
+
+    private void ensureDailyProgress(UUID uuid) {
+        String path = dailyPath(uuid);
+        String today = LocalDate.now().toString();
+        if (!today.equals(playerData.getString(path + ".progress-date", ""))) {
+            playerData.set(path + ".progress-date", today);
+            playerData.set(path + ".play-seconds", 0);
+        }
+    }
+
+    private int dailyStreak(UUID uuid) {
+        String lastClaim = playerData.getString(dailyPath(uuid) + ".last-claim", "");
+        if (lastClaim.isBlank()) return 0;
+        try {
+            LocalDate last = LocalDate.parse(lastClaim);
+            LocalDate today = LocalDate.now();
+            if (last.isBefore(today.minusDays(1))) return 0;
+            return Math.max(0, playerData.getInt(dailyPath(uuid) + ".streak", 0));
+        } catch (RuntimeException exception) {
+            return 0;
+        }
+    }
+
+    private int dailyPlaySeconds(UUID uuid) {
+        ensureDailyProgress(uuid);
+        return Math.max(0, playerData.getInt(dailyPath(uuid) + ".play-seconds", 0));
+    }
+
+    private int dailyRequiredSeconds(UUID uuid) {
+        int nextDay = dailyStreak(uuid) + 1;
+        int base = Math.max(1, getConfig().getInt("daily.base-play-minutes", 10));
+        int increase = Math.max(0, getConfig().getInt("daily.extra-minutes-per-streak-day", 5));
+        int maximum = Math.max(base, getConfig().getInt("daily.maximum-play-minutes", 120));
+        return Math.min(maximum, base + (nextDay - 1) * increase) * 60;
+    }
+
+    private List<Map<?, ?>> dailyRewards() {
+        return getConfig().getMapList("daily.rewards");
+    }
+
+    private void startDailyTracking(Player player) {
+        UUID uuid = player.getUniqueId();
+        ensureDailyProgress(uuid);
+        if (dailyTasks.containsKey(uuid)) return;
+        BukkitTask task = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline()) {
+                stopDailyTracking(uuid);
+                return;
+            }
+            // AFK farming does not count toward the daily active-play requirement.
+            if (afkPlayers.containsKey(uuid)) return;
+            int seconds = dailyPlaySeconds(uuid) + 1;
+            playerData.set(dailyPath(uuid) + ".play-seconds", seconds);
+            int unsaved = dailyUnsavedSeconds.getOrDefault(uuid, 0) + 1;
+            if (unsaved >= 60) {
+                saveDailyData();
+                unsaved = 0;
+            }
+            dailyUnsavedSeconds.put(uuid, unsaved);
+        }, 20L, 20L);
+        dailyTasks.put(uuid, task);
+    }
+
+    private void stopDailyTracking(UUID uuid) {
+        BukkitTask task = dailyTasks.remove(uuid);
+        if (task != null) task.cancel();
+        dailyUnsavedSeconds.remove(uuid);
+        saveDailyData();
+    }
+
+    private void saveDailyData() {
+        try {
+            playerData.save(playersFile);
+        } catch (IOException exception) {
+            getLogger().severe("Could not save daily reward progress: " + exception.getMessage());
+        }
+    }
+
+    private String dailyTier(int day) {
+        if (day <= 5) return "&7COMMON";
+        if (day <= 10) return "&aUNCOMMON";
+        if (day <= 15) return "&9RARE";
+        if (day <= 20) return "&5EPIC";
+        if (day <= 25) return "&6LEGENDARY";
+        return "&cMYTHIC";
+    }
+
+    private void openDaily(Player player) {
+        List<Map<?, ?>> rewards = dailyRewards();
+        if (rewards.isEmpty()) {
+            msg(player, "&cDaily rewards are not configured.");
+            return;
+        }
+        MenuHolder holder = new MenuHolder(MenuType.DAILY, null, 0);
+        Inventory inventory = Bukkit.createInventory(holder, 54, color("&8Daily Rewards"));
+        holder.inventory = inventory;
+        int streak = dailyStreak(player.getUniqueId());
+        int nextDay = streak + 1;
+        int rewardIndex = streak % rewards.size();
+        String today = LocalDate.now().toString();
+        boolean claimed = today.equals(playerData.getString(dailyPath(player.getUniqueId()) + ".last-claim", ""));
+        int required = dailyRequiredSeconds(player.getUniqueId());
+        int played = dailyPlaySeconds(player.getUniqueId());
+
+        for (int i = 0; i < rewards.size() && i < 45; i++) {
+            Map<?, ?> reward = rewards.get(i);
+            Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "CHEST")));
+            if (material == null || material.isAir()) material = Material.CHEST;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
+            int displayDay = i + 1;
+            String rewardName = String.valueOf(reward.getOrDefault("name", material.name().replace('_', ' ')));
+            List<String> lore = new ArrayList<>();
+            lore.add("&7Tier: " + dailyTier(displayDay));
+            lore.add("&7Reward: &f" + rewardName + " x" + amount);
+            if (i == rewardIndex) lore.add(claimed ? "&aClaimed today" : "&eYour next reward");
+            else if (i < rewardIndex) lore.add("&aPrevious streak reward");
+            else lore.add("&8Upcoming reward");
+            ItemStack icon = icon(material, (i == rewardIndex ? "&e" : "&f") + "Day " + displayDay, lore);
+            inventory.setItem(i, icon);
+        }
+
+        int remaining = Math.max(0, required - played);
+        inventory.setItem(49, icon(Material.CLOCK, "&6Daily Progress", List.of(
+                "&7Streak: &f" + streak + " day(s)",
+                "&7Played today: &f" + played / 60 + "m " + played % 60 + "s",
+                "&7Required: &f" + required / 60 + " minute(s)",
+                "&7Remaining: &e" + remaining / 60 + "m " + remaining % 60 + "s",
+                claimed ? "&aToday's reward has been claimed." : "&ePlay to unlock your reward."
+        )));
+        inventory.setItem(50, icon(claimed ? Material.MINECART : (played >= required ? Material.EMERALD : Material.BARRIER),
+                claimed ? "&aAlready Claimed" : "&eClaim Daily Reward",
+                List.of(claimed ? "&7Come back tomorrow." : played >= required
+                        ? "&aClick to collect your reward." : "&cYou have not played long enough yet.")));
+        inventory.setItem(53, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
+        player.openInventory(inventory);
+    }
+
+    private void claimDaily(Player player) {
+        UUID uuid = player.getUniqueId();
+        String today = LocalDate.now().toString();
+        String path = dailyPath(uuid);
+        if (today.equals(playerData.getString(path + ".last-claim", ""))) {
+            msg(player, "&eYou have already claimed today's reward.");
+            return;
+        }
+        int required = dailyRequiredSeconds(uuid);
+        int played = dailyPlaySeconds(uuid);
+        if (played < required) {
+            int remaining = required - played;
+            msg(player, "&cPlay for another " + remaining / 60 + "m " + remaining % 60 + "s to unlock your daily reward.");
+            return;
+        }
+        List<Map<?, ?>> rewards = dailyRewards();
+        if (rewards.isEmpty()) {
+            msg(player, "&cDaily rewards are not configured.");
+            return;
+        }
+        int streak = dailyStreak(uuid);
+        int rewardIndex = streak % rewards.size();
+        Map<?, ?> reward = rewards.get(rewardIndex);
+        Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "")));
+        if (material == null || material.isAir()) {
+            msg(player, "&cThe configured daily reward is invalid. Please contact an administrator.");
+            return;
+        }
+        int amount;
+        try { amount = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+        catch (NumberFormatException exception) { amount = 1; }
+        amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
+        ItemStack prize = new ItemStack(material, amount);
+        Map<Integer, ItemStack> overflow = player.getInventory().addItem(prize);
+        for (ItemStack extra : overflow.values()) player.getWorld().dropItemNaturally(player.getLocation(), extra);
+        int newStreak = streak + 1;
+        playerData.set(path + ".streak", newStreak);
+        playerData.set(path + ".last-claim", today);
+        saveDailyData();
+        String rewardName = String.valueOf(reward.getOrDefault("name", material.name().replace('_', ' ')));
+        msg(player, "&aDaily reward claimed: &e" + rewardName + " x" + amount + "&a. Streak: &e" + newStreak + " day(s)&a.");
+        player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.2f);
+        player.closeInventory();
+    }
+
     private void applyMaintenanceMotd() {
         Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
+    }
+
+    @EventHandler
+    public void onDailyQuit(PlayerQuitEvent event) {
+        stopDailyTracking(event.getPlayer().getUniqueId());
     }
 
     @EventHandler
@@ -1184,6 +1383,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             return;
         }
 
+        if (holder.type == MenuType.DAILY) {
+            event.setCancelled(true);
+            if (raw == 50) claimDaily(player);
+            else if (raw == 53) player.closeInventory();
+            return;
+        }
+
         if (holder.type == MenuType.SHOP_ITEMS) {
             event.setCancelled(true);
             if (raw == 45) {
@@ -1248,6 +1454,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!(event.getWhoClicked() instanceof Player player)) return;
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof MenuHolder holder)) return;
+        if (holder.type == MenuType.DAILY) {
+            event.setCancelled(true);
+            return;
+        }
         if (holder.type == MenuType.SELL) {
             for (int raw : event.getRawSlots()) {
                 if (raw >= 45 && raw < top.getSize()) {
@@ -1283,6 +1493,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if (!sender.hasPermission("jsmp.shop")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open the shop."); return true; }
                 openCategories(player);
+                return true;
+            }
+            case "daily" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /daily."); return true; }
+                if (args.length != 0) { msg(player, "&cUsage: /daily"); return true; }
+                openDaily(player);
                 return true;
             }
             case "afk" -> {
