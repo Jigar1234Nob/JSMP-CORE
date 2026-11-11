@@ -79,6 +79,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private FileConfiguration playerData;
     private final Map<UUID, Double> balances = new LinkedHashMap<>();
     private final Map<UUID, String> playerNames = new LinkedHashMap<>();
+    private final Map<UUID, Map<String, Location>> homes = new LinkedHashMap<>();
     private final Set<UUID> vanishedPlayers = new HashSet<>();
     private final Set<UUID> godPlayers = new HashSet<>();
     private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
@@ -149,6 +150,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (economyDatabase == null) return;
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
+        loadHomes();
         generateWorthCatalogue();
         originalMotd = Bukkit.getMotd();
         maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
@@ -197,6 +199,19 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                             uuid TEXT PRIMARY KEY NOT NULL,
                             player_name TEXT NOT NULL,
                             balance REAL NOT NULL CHECK(balance >= 0)
+                        )
+                        """);
+                statement.execute("""
+                        CREATE TABLE IF NOT EXISTS homes (
+                            uuid TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            world TEXT NOT NULL,
+                            x REAL NOT NULL,
+                            y REAL NOT NULL,
+                            z REAL NOT NULL,
+                            yaw REAL NOT NULL,
+                            pitch REAL NOT NULL,
+                            PRIMARY KEY (uuid, name)
                         )
                         """);
             }
@@ -305,6 +320,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
         int added = 0;
         boolean removed = false;
+        boolean applyPriceIncrease = !getConfig().getBoolean("economy.high-price-migration-v1", false);
+        double minimumPrice = 1001.0;
         ConfigurationSection existing = worth.getConfigurationSection("items");
         if (existing != null) {
             for (String key : new ArrayList<>(existing.getKeys(false))) {
@@ -319,21 +336,28 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             if (!isShopCatalogueItem(material)) continue;
             String path = "items." + material.name();
             if (isRestrictedShopItem(material)) {
-                worth.set(path + ".price", 0.0);
+                worth.set(path + ".price", minimumPrice);
                 worth.set(path + ".sellable", false);
                 continue;
             }
             if (!worth.contains(path + ".price")) {
-                double price = defaultWorth(material);
+                double price = Math.max(minimumPrice, defaultWorth(material) * 1000.0);
                 worth.set(path + ".price", price);
-                worth.set(path + ".sellable", price > 0);
+                worth.set(path + ".sellable", true);
                 added++;
-            } else if (!worth.contains(path + ".sellable")) {
-                worth.set(path + ".sellable", worth.getDouble(path + ".price", 0) > 0);
+            } else {
+                double currentPrice = worth.getDouble(path + ".price", 0.0);
+                if (applyPriceIncrease) currentPrice *= 1000.0;
+                worth.set(path + ".price", Math.max(minimumPrice, currentPrice));
+                if (!worth.contains(path + ".sellable")) worth.set(path + ".sellable", true);
             }
         }
-        if (added > 0 || removed || !worthFile.exists()) saveWorth();
-        getLogger().info("Worth catalogue ready; added " + added + " new materials.");
+        if (applyPriceIncrease) {
+            getConfig().set("economy.high-price-migration-v1", true);
+            saveConfig();
+        }
+        if (added > 0 || removed || applyPriceIncrease || !worthFile.exists()) saveWorth();
+        getLogger().info("Worth catalogue ready; added " + added + " new materials. Minimum base item price: $1,001.");
     }
 
     private double defaultWorth(Material material) {
@@ -768,28 +792,90 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }, 0L, 5L);
     }
 
+    private void loadHomes() {
+        if (economyDatabase == null) return;
+        try {
+            // Import legacy YAML homes without overwriting any homes already in SQLite.
+            ConfigurationSection allHomes = playerData.getConfigurationSection("homes");
+            if (allHomes != null) {
+                try (PreparedStatement insert = economyDatabase.prepareStatement(
+                        "INSERT OR IGNORE INTO homes (uuid, name, world, x, y, z, yaw, pitch) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    for (String uuidText : allHomes.getKeys(false)) {
+                        UUID uuid;
+                        try { uuid = UUID.fromString(uuidText); }
+                        catch (IllegalArgumentException ignored) { continue; }
+                        ConfigurationSection playerHomes = allHomes.getConfigurationSection(uuidText);
+                        if (playerHomes == null) continue;
+                        for (String homeName : playerHomes.getKeys(false)) {
+                            String path = "homes." + uuidText + "." + homeName;
+                            String worldName = playerData.getString(path + ".world");
+                            if (worldName == null || worldName.isBlank()) continue;
+                            insert.setString(1, uuid.toString());
+                            insert.setString(2, homeName.toLowerCase(Locale.ROOT));
+                            insert.setString(3, worldName);
+                            insert.setDouble(4, playerData.getDouble(path + ".x"));
+                            insert.setDouble(5, playerData.getDouble(path + ".y"));
+                            insert.setDouble(6, playerData.getDouble(path + ".z"));
+                            insert.setFloat(7, (float) playerData.getDouble(path + ".yaw"));
+                            insert.setFloat(8, (float) playerData.getDouble(path + ".pitch"));
+                            insert.addBatch();
+                        }
+                    }
+                    insert.executeBatch();
+                }
+            }
+            try (Statement statement = economyDatabase.createStatement();
+                 ResultSet result = statement.executeQuery("SELECT uuid, name, world, x, y, z, yaw, pitch FROM homes")) {
+                while (result.next()) {
+                    try {
+                        UUID uuid = UUID.fromString(result.getString("uuid"));
+                        World world = Bukkit.getWorld(result.getString("world"));
+                        if (world == null) continue;
+                        Location location = new Location(world, result.getDouble("x"), result.getDouble("y"),
+                                result.getDouble("z"), result.getFloat("yaw"), result.getFloat("pitch"));
+                        homes.computeIfAbsent(uuid, ignored -> new LinkedHashMap<>())
+                                .put(result.getString("name").toLowerCase(Locale.ROOT), location);
+                    } catch (IllegalArgumentException ignored) {
+                        getLogger().warning("Skipping a home with an invalid player UUID in economy.db.");
+                    }
+                }
+            }
+            getLogger().info("Loaded " + homes.values().stream().mapToInt(Map::size).sum() + " homes from economy.db.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not load homes from economy.db: " + exception.getMessage());
+        }
+    }
+
     private void setHome(Player player, String name) {
         String homeName = name.toLowerCase(Locale.ROOT);
         Location location = player.getLocation();
-        String path = "homes." + player.getUniqueId() + "." + homeName;
-        playerData.set(path + ".world", location.getWorld().getName());
-        playerData.set(path + ".x", location.getX());
-        playerData.set(path + ".y", location.getY());
-        playerData.set(path + ".z", location.getZ());
-        playerData.set(path + ".yaw", location.getYaw());
-        playerData.set(path + ".pitch", location.getPitch());
-        saveBalances();
-        msg(player, "&aHome &f" + homeName + " &asaved.");
+        try (PreparedStatement statement = economyDatabase.prepareStatement(
+                "INSERT INTO homes (uuid, name, world, x, y, z, yaw, pitch) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                        + "ON CONFLICT(uuid, name) DO UPDATE SET world=excluded.world, x=excluded.x, y=excluded.y, "
+                        + "z=excluded.z, yaw=excluded.yaw, pitch=excluded.pitch")) {
+            statement.setString(1, player.getUniqueId().toString());
+            statement.setString(2, homeName);
+            statement.setString(3, location.getWorld().getName());
+            statement.setDouble(4, location.getX());
+            statement.setDouble(5, location.getY());
+            statement.setDouble(6, location.getZ());
+            statement.setFloat(7, location.getYaw());
+            statement.setFloat(8, location.getPitch());
+            statement.executeUpdate();
+            homes.computeIfAbsent(player.getUniqueId(), ignored -> new LinkedHashMap<>())
+                    .put(homeName, location.clone());
+            msg(player, "&aHome &f" + homeName + " &asaved to the database.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not save home for " + player.getName() + ": " + exception.getMessage());
+            msg(player, "&cCould not save that home. Check the server console.");
+        }
     }
 
     private Location getHome(Player player, String name) {
-        String path = "homes." + player.getUniqueId() + "." + name.toLowerCase(Locale.ROOT);
-        if (!playerData.contains(path + ".world")) return null;
-        World world = Bukkit.getWorld(playerData.getString(path + ".world", ""));
-        if (world == null) return null;
-        return new Location(world, playerData.getDouble(path + ".x"), playerData.getDouble(path + ".y"),
-                playerData.getDouble(path + ".z"), (float) playerData.getDouble(path + ".yaw"),
-                (float) playerData.getDouble(path + ".pitch"));
+        Map<String, Location> playerHomes = homes.get(player.getUniqueId());
+        if (playerHomes == null) return null;
+        Location location = playerHomes.get(name.toLowerCase(Locale.ROOT));
+        return location == null ? null : location.clone();
     }
 
     private boolean validHomeName(String name) {
@@ -1076,11 +1162,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use homes."); return true; }
                 if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (args.length == 0) {
-                    ConfigurationSection homes = playerData.getConfigurationSection("homes." + player.getUniqueId());
-                    if (homes == null || homes.getKeys(false).isEmpty()) {
+                    Map<String, Location> playerHomes = homes.get(player.getUniqueId());
+                    if (playerHomes == null || playerHomes.isEmpty()) {
                         msg(player, "&eYou have no homes. Set one with /sethome <name>.");
                     } else {
-                        msg(player, "&6Your homes: &f" + String.join("&7, &f", homes.getKeys(false)));
+                        msg(player, "&6Your homes: &f" + String.join("&7, &f", playerHomes.keySet()));
                     }
                     return true;
                 }
