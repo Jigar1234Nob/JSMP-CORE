@@ -5,6 +5,9 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.Sound;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -18,6 +21,8 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import io.papermc.paper.event.player.AsyncChatEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.entity.LivingEntity;
@@ -82,6 +87,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private final Map<UUID, Map<String, Location>> homes = new LinkedHashMap<>();
     private final Set<UUID> vanishedPlayers = new HashSet<>();
     private final Set<UUID> godPlayers = new HashSet<>();
+    private final Map<UUID, AfkSession> afkPlayers = new HashMap<>();
     private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
     private final Map<UUID, Integer> antiCheatFlags = new HashMap<>();
     private final Map<UUID, Long> lastAntiCheatFlag = new HashMap<>();
@@ -90,6 +96,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private boolean maintenanceEnabled;
     private String originalMotd;
     private NamespacedKey worthLoreKey;
+
+    private static final class AfkSession {
+        private final BossBar bossBar;
+        private final BukkitTask task;
+        private int secondsRemaining = 60;
+
+        private AfkSession(BossBar bossBar, BukkitTask task) {
+            this.bossBar = bossBar;
+            this.task = task;
+        }
+    }
 
     private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
 
@@ -157,7 +174,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
@@ -171,6 +188,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     @Override
     public void onDisable() {
+        for (UUID uuid : new ArrayList<>(afkPlayers.keySet())) stopAfk(uuid, false, false);
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (vanishedPlayers.contains(player.getUniqueId())) {
                 for (Player viewer : Bukkit.getOnlinePlayers()) viewer.showPlayer(this, player);
@@ -1032,6 +1050,86 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     @EventHandler
+    public void onAfkMove(PlayerMoveEvent event) {
+        AfkSession session = afkPlayers.get(event.getPlayer().getUniqueId());
+        if (session == null || event.getTo() == null) return;
+
+        Location from = event.getFrom();
+        Location to = event.getTo();
+        if (from.getWorld() == to.getWorld()
+                && from.getX() == to.getX()
+                && from.getY() == to.getY()
+                && from.getZ() == to.getZ()) return;
+
+        // Freeze position while still allowing the player to look around.
+        event.setTo(new Location(from.getWorld(), from.getX(), from.getY(), from.getZ(),
+                to.getYaw(), to.getPitch()));
+    }
+
+    @EventHandler
+    public void onAfkChat(AsyncChatEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        if (!afkPlayers.containsKey(uuid)) return;
+        Bukkit.getScheduler().runTask(this, () -> stopAfk(uuid, true, true));
+    }
+
+    @EventHandler
+    public void onAfkQuit(PlayerQuitEvent event) {
+        stopAfk(event.getPlayer().getUniqueId(), false, false);
+    }
+
+    private void toggleAfk(Player player) {
+        UUID uuid = player.getUniqueId();
+        if (afkPlayers.containsKey(uuid)) {
+            stopAfk(uuid, true, true);
+            return;
+        }
+
+        BossBar bar = Bukkit.createBossBar("", BarColor.GREEN, BarStyle.SOLID);
+        bar.setVisible(true);
+        bar.addPlayer(player);
+        AfkSession[] holder = new AfkSession[1];
+        BukkitTask task = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            AfkSession session = holder[0];
+            if (session == null || !player.isOnline()) {
+                stopAfk(uuid, false, false);
+                return;
+            }
+
+            session.secondsRemaining--;
+            if (session.secondsRemaining <= 0) {
+                setBalance(uuid, balance(uuid) + 1000.0);
+                msg(player, "&aAFK reward received: &e$1,000&a.");
+                session.secondsRemaining = 60;
+            }
+            updateAfkBossBar(session);
+        }, 20L, 20L);
+
+        AfkSession session = new AfkSession(bar, task);
+        holder[0] = session;
+        afkPlayers.put(uuid, session);
+        updateAfkBossBar(session);
+        msg(player, "&aAFK mode enabled. Stay still to earn &e$1,000 &aper minute.");
+    }
+
+    private void updateAfkBossBar(AfkSession session) {
+        session.bossBar.setTitle(color("&aAFK Reward: &e$1,000 &7in &f" + session.secondsRemaining + "s"));
+        session.bossBar.setProgress(Math.max(0.0, Math.min(1.0, session.secondsRemaining / 60.0)));
+    }
+
+    private void stopAfk(UUID uuid, boolean notify, boolean onlineOnly) {
+        AfkSession session = afkPlayers.remove(uuid);
+        if (session == null) return;
+        session.task.cancel();
+        session.bossBar.removeAll();
+        session.bossBar.setVisible(false);
+        Player player = Bukkit.getPlayer(uuid);
+        if (notify && player != null && (!onlineOnly || player.isOnline())) {
+            msg(player, "&eAFK mode disabled. You did not receive a partial-minute reward.");
+        }
+    }
+
+    @EventHandler
     public void onAntiCheatMove(PlayerMoveEvent event) {
         if (!getConfig().getBoolean("anti-cheat.check-movement", false)) return;
         Player player = event.getPlayer();
@@ -1185,6 +1283,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if (!sender.hasPermission("jsmp.shop")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open the shop."); return true; }
                 openCategories(player);
+                return true;
+            }
+            case "afk" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /afk."); return true; }
+                if (args.length != 0) { msg(player, "&cUsage: /afk"); return true; }
+                toggleAfk(player);
                 return true;
             }
             case "rtp" -> {
