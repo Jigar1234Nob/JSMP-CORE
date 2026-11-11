@@ -3,9 +3,14 @@ name: Build JSMPCore
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'JSMPCore.jar'
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -13,6 +18,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
       - name: Set up Java 25
         uses: actions/setup-java@v4
         with:
@@ -24,7 +31,18 @@ jobs:
           gradle-version: '9.1.0'
       - name: Build plugin
         run: gradle clean build
-      - name: Upload plugin jar
+      - name: Publish JAR to repository root
+        if: github.event_name == 'push'
+        run: |
+          cp build/libs/*.jar JSMPCore.jar
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add JSMPCore.jar
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish latest JSMPCore build"
+            git push
+          fi
+      - name: Upload plugin jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: JSMPCore-Paper-26.3
