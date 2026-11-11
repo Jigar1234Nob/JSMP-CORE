@@ -10,6 +10,8 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - `/shop` category-based GUI: Blocks, Gems, Farming, Food, Nether, Arsenal, Alchemy, Redstone Lab, Workstations and General Supplies.
 - `/sell` deposit GUI with a sell-all button. Unsellable items are returned when the menu closes.
 - Configurable item prices and sell permissions in `plugins/JSMPCore/worth.yml`.
+- Prices are multiplied by `economy.price-multiplier` (default 3.0) for shop purchases, sales and item lore.
+- The catalogue excludes rare special loot such as Elytra, Dragon Eggs, Totems, Nether Stars, Shulker Boxes, Tridents and Maces.
 - Item worth shown in item hover lore, including items newly picked up or added to player inventories.
 - `/balance [player]`, `/baltop`, `/pay <player> <amount>`.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
