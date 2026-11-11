@@ -15,6 +15,7 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - Item worth shown in item hover lore, including items newly picked up or added to player inventories.
 - `/balance [player]`, `/baltop`, `/pay <player> <amount>`.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
+- Player balances are stored persistently in `plugins/JSMPCore/economy.db` (SQLite). Existing balances in `players.yml` are imported automatically on the first database startup; named homes remain in `players.yml`.
 - `/vanish` toggles admin visibility, including hiding vanished admins from players who join later.
 - `/god` and `/ungod` toggle admin invulnerability.
 - `/rtp` teleports players to a random safe location within the configured world border after a 3-second chat/title countdown; RTP applies brief blindness and displays live coordinates in the action bar.
