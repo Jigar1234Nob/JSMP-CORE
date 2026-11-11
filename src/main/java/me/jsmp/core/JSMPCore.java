@@ -195,11 +195,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void generateWorthCatalogue() {
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
         int added = 0;
+        boolean removed = false;
         ConfigurationSection existing = worth.getConfigurationSection("items");
         if (existing != null) {
             for (String key : new ArrayList<>(existing.getKeys(false))) {
                 Material material = Material.matchMaterial(key);
-                if (!isShopCatalogueItem(material)) worth.set("items." + key, null);
+                if (!isShopCatalogueItem(material)) {
+                    worth.set("items." + key, null);
+                    removed = true;
+                }
             }
         }
         for (Material material : Material.values()) {
@@ -219,7 +223,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 worth.set(path + ".sellable", worth.getDouble(path + ".price", 0) > 0);
             }
         }
-        if (added > 0 || !worthFile.exists()) saveWorth();
+        if (added > 0 || removed || !worthFile.exists()) saveWorth();
         getLogger().info("Worth catalogue ready; added " + added + " new materials.");
     }
 
@@ -623,7 +627,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         WorldBorder border = world.getWorldBorder();
         Location center = border.getCenter();
         double borderLimit = Math.max(0, border.getSize() / 2.0 - getConfig().getDouble("rtp.border-margin", 16.0));
-        double radius = Math.min(borderLimit, Math.max(1, getConfig().getDouble("rtp.max-radius", 10000.0)));
+        double configuredMaxRadius = getConfig().getDouble("rtp.max-radius", 0.0);
+        double radius = configuredMaxRadius > 0 ? Math.min(borderLimit, configuredMaxRadius) : borderLimit;
+        if (radius < 1) return false;
         double minRadius = Math.max(0, Math.min(radius, getConfig().getDouble("rtp.min-radius", 500.0)));
         int attempts = Math.max(1, getConfig().getInt("rtp.attempts", 32));
         ThreadLocalRandom random = ThreadLocalRandom.current();
