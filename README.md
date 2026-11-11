@@ -13,6 +13,8 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - Item worth shown in item hover lore, including items newly picked up or added to player inventories.
 - `/balance [player]`, `/baltop`, `/pay <player> <amount>`.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
+- `/vanish` toggles admin visibility, including hiding vanished admins from players who join later.
+- `/god` and `/ungod` toggle admin invulnerability.
 - YAML-backed balances, saved by UUID.
 - GitHub Actions build workflow for Paper 26.3.
 
@@ -54,10 +56,14 @@ items:
 | `/money give <player> <amount>` | Admin: give money |
 | `/money take <player> <amount>` | Admin: take money |
 | `/money set <player> <amount>` | Admin: set money |
+| `/vanish` | Admin: toggle vanish |
+| `/god` | Admin: enable invulnerability |
+| `/ungod` | Admin: disable invulnerability |
 
 ## Permissions
 - `jsmp.shop`, `jsmp.sell`, `jsmp.balance`, `jsmp.baltop`, `jsmp.pay`: default true
 - `jsmp.admin`: default op
+- `jsmp.vanish`, `jsmp.god`: default op (also require `jsmp.admin`)
 
 ## Notes
 - Alchemy lists drinkable potions only. Splash and lingering potions are excluded from the shop.
