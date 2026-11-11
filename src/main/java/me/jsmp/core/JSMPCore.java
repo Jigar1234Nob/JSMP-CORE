@@ -163,6 +163,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
         saveBalances();
         saveWorth();
+        if (originalMotd != null) Bukkit.setMotd(originalMotd);
     }
 
     private void loadBalances() {
@@ -897,6 +898,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 getConfig().set("maintenance.enabled", maintenanceEnabled);
                 saveConfig();
                 applyMaintenanceMotd();
+                if (maintenanceEnabled) {
+                    for (Player online : Bukkit.getOnlinePlayers()) {
+                        if (!online.isOp() && !online.isWhitelisted()) {
+                            online.kickPlayer(color("&6Server under maintenance\n&7Please try again later."));
+                        }
+                    }
+                }
                 msg(sender, maintenanceEnabled ? "&6Maintenance mode enabled. Only operators and whitelisted players can join."
                         : "&aMaintenance mode disabled. The server is open to everyone.");
                 return true;
