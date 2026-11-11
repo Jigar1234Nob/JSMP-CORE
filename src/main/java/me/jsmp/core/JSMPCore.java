@@ -848,6 +848,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return getConfig().getMapList("daily.rewards");
     }
 
+    private Object dailyRewardValue(Map<?, ?> reward, String key, Object fallback) {
+        Object value = reward.get(key);
+        return value == null ? fallback : value;
+    }
+
     private void startDailyTracking(Player player) {
         UUID uuid = player.getUniqueId();
         ensureDailyProgress(uuid);
@@ -914,14 +919,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
         for (int i = 0; i < rewards.size() && i < 45; i++) {
             Map<?, ?> reward = rewards.get(i);
-            Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "CHEST")));
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "CHEST")));
             if (material == null || material.isAir()) material = Material.CHEST;
             int amount;
-            try { amount = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
             catch (NumberFormatException exception) { amount = 1; }
             amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
             int displayDay = i + 1;
-            String rewardName = String.valueOf(reward.getOrDefault("name", material.name().replace('_', ' ')));
+            String rewardName = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
             List<String> lore = new ArrayList<>();
             lore.add("&7Tier: " + dailyTier(displayDay));
             lore.add("&7Reward: &f" + rewardName + " x" + amount);
