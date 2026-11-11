@@ -44,6 +44,8 @@ rtp:
   max-radius: 0
   border-margin: 16
   attempts: 32
+  # Blindness duration after RTP, in ticks (100 ticks = 5 seconds).
+  blindness-duration-ticks: 100
 
 # Maintenance mode can also be toggled with /maintenance.
 maintenance:
