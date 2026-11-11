@@ -36,3 +36,15 @@ anti-cheat:
   max-horizontal-move-per-event: 1.25
   # A player is kicked after this many flags within 60 seconds. Set to 0 for alerts/logging only.
   punish-threshold: 5
+
+# Random teleport settings. RTP samples the playable area inside the world's border.
+rtp:
+  world: "world"
+  min-radius: 500
+  max-radius: 10000
+  border-margin: 16
+  attempts: 32
+
+# Maintenance mode can also be toggled with /maintenance.
+maintenance:
+  enabled: false
