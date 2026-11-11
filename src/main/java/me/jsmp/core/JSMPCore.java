@@ -35,6 +35,9 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,6 +53,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private FileConfiguration playerData;
     private final Map<UUID, Double> balances = new LinkedHashMap<>();
     private final Map<UUID, String> playerNames = new LinkedHashMap<>();
+    private final Set<UUID> vanishedPlayers = new HashSet<>();
+    private final Set<UUID> godPlayers = new HashSet<>();
+    private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
     private NamespacedKey worthLoreKey;
 
     private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
@@ -114,7 +120,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         generateWorthCatalogue();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
@@ -128,6 +134,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     @Override
     public void onDisable() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (vanishedPlayers.contains(player.getUniqueId())) {
+                for (Player viewer : Bukkit.getOnlinePlayers()) viewer.showPlayer(this, player);
+            }
+            if (godPlayers.contains(player.getUniqueId())) {
+                player.setInvulnerable(previousInvulnerability.getOrDefault(player.getUniqueId(), false));
+            }
+        }
         saveBalances();
         saveWorth();
     }
@@ -516,8 +530,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
-        remember(event.getPlayer());
-        Bukkit.getScheduler().runTask(this, () -> decorateInventory(event.getPlayer()));
+        Player joining = event.getPlayer();
+        remember(joining);
+        for (UUID vanishedId : vanishedPlayers) {
+            Player vanished = Bukkit.getPlayer(vanishedId);
+            if (vanished != null && !vanished.getUniqueId().equals(joining.getUniqueId())) joining.hidePlayer(this, vanished);
+        }
+        if (vanishedPlayers.contains(joining.getUniqueId())) {
+            for (Player viewer : Bukkit.getOnlinePlayers()) {
+                if (!viewer.getUniqueId().equals(joining.getUniqueId())) viewer.hidePlayer(this, joining);
+            }
+        }
+        Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
     }
 
     @EventHandler
@@ -711,6 +735,54 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 setBalance(target.getUniqueId(), balance(target.getUniqueId()) + amount);
                 msg(player, "&aYou paid &f" + target.getName() + " &e" + money(amount) + "&a.");
                 msg(target, "&aYou received &e" + money(amount) + " &afrom &f" + player.getName() + "&a.");
+                return true;
+            }
+            case "vanish" -> {
+                if (!sender.hasPermission("jsmp.admin") || !sender.hasPermission("jsmp.vanish")) {
+                    msg(sender, "&cYou do not have permission."); return true;
+                }
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can vanish."); return true; }
+                UUID uuid = player.getUniqueId();
+                if (vanishedPlayers.remove(uuid)) {
+                    for (Player viewer : Bukkit.getOnlinePlayers()) viewer.showPlayer(this, player);
+                    msg(player, "&aYou are now visible.");
+                } else {
+                    vanishedPlayers.add(uuid);
+                    for (Player viewer : Bukkit.getOnlinePlayers()) {
+                        if (!viewer.getUniqueId().equals(uuid)) viewer.hidePlayer(this, player);
+                    }
+                    msg(player, "&aYou are now vanished.");
+                }
+                return true;
+            }
+            case "god" -> {
+                if (!sender.hasPermission("jsmp.admin") || !sender.hasPermission("jsmp.god")) {
+                    msg(sender, "&cYou do not have permission."); return true;
+                }
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use god mode."); return true; }
+                UUID uuid = player.getUniqueId();
+                if (godPlayers.add(uuid)) {
+                    previousInvulnerability.put(uuid, player.isInvulnerable());
+                    player.setInvulnerable(true);
+                    msg(player, "&aGod mode enabled.");
+                } else {
+                    msg(player, "&eGod mode is already enabled. Use /ungod to disable it.");
+                }
+                return true;
+            }
+            case "ungod" -> {
+                if (!sender.hasPermission("jsmp.admin") || !sender.hasPermission("jsmp.god")) {
+                    msg(sender, "&cYou do not have permission."); return true;
+                }
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use god mode."); return true; }
+                UUID uuid = player.getUniqueId();
+                if (godPlayers.remove(uuid)) {
+                    player.setInvulnerable(previousInvulnerability.getOrDefault(uuid, false));
+                    previousInvulnerability.remove(uuid);
+                    msg(player, "&cGod mode disabled.");
+                } else {
+                    msg(player, "&eGod mode is not enabled.");
+                }
                 return true;
             }
             case "money" -> {
