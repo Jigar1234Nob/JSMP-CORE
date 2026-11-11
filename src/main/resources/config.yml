@@ -1,0 +1,22 @@
+currency:
+  symbol: "$"
+  starting-balance: 100.00
+  decimal-places: 2
+
+shop:
+  title: "&8JSMP Shop"
+  items-per-page: 45
+  allow-shift-stack-buy: true
+
+sell:
+  title: "&8Sell Items"
+  confirm-slot: 49
+  sell-multiplier: 1.0
+  unknown-items-sellable: false
+
+economy:
+  baltop-size: 10
+  minimum-payment: 0.01
+
+messages:
+  prefix: "&8[&6JSMP&8] &r"
