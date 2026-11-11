@@ -88,6 +88,6 @@ items:
 
 ## Random teleport and maintenance
 
-Configure `rtp.world`, `rtp.min-radius` and `rtp.max-radius` in `plugins/JSMPCore/config.yml`. RTP checks the world's border and looks for solid ground with two clear blocks above it. The default maximum radius is 10,000 blocks from the world-border centre; raise it to expand the search area, while keeping your world-generation limits in mind.
+Configure `rtp.world`, `rtp.min-radius` and `rtp.max-radius` in `plugins/JSMPCore/config.yml`. RTP checks the world's border and looks for solid ground with two clear blocks above it. By default, RTP samples the full area inside the configured world border. Set `rtp.max-radius` to a positive number to cap the radius from the border centre, or leave it at `0` to use the entire border. Set a sensible world border before enabling unrestricted RTP, because Minecraft may need to generate chunks at the destination.
 
 Maintenance mode is saved in the plugin config. Use `/maintenance on` to close the server to non-operators and non-whitelisted players, and `/maintenance off` to reopen it. The plugin restores the normal MOTD when maintenance is disabled.
