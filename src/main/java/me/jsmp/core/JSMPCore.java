@@ -179,6 +179,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         for (Material material : Material.values()) {
             if (!material.isItem() || material.isAir()) continue;
             String path = "items." + material.name();
+            if (isRestrictedShopItem(material)) {
+                worth.set(path + ".price", 0.0);
+                worth.set(path + ".sellable", false);
+                continue;
+            }
             if (!worth.contains(path + ".price")) {
                 double price = defaultWorth(material);
                 worth.set(path + ".price", price);
@@ -283,10 +288,23 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return playerNames.getOrDefault(uuid, uuid.toString().substring(0, 8));
     }
 
+    private boolean isRestrictedShopItem(Material material) {
+        String n = material.name();
+        return n.equals("ELYTRA") || n.equals("DRAGON_EGG") || n.equals("DRAGON_HEAD")
+                || n.equals("DRAGON_WALL_HEAD") || n.equals("NETHER_STAR") || n.equals("BEACON")
+                || n.equals("TOTEM_OF_UNDYING") || n.equals("SHULKER_SHELL") || n.startsWith("SHULKER_BOX")
+                || n.equals("END_CRYSTAL") || n.equals("SPAWNER") || n.equals("ENCHANTED_GOLDEN_APPLE")
+                || n.equals("TRIDENT") || n.equals("MACE") || n.equals("WITHER_SKELETON_SKULL")
+                || n.equals("WITHER_SKELETON_WALL_SKULL");
+    }
+
     private double worth(Material material) {
+        if (isRestrictedShopItem(material)) return 0;
         String path = "items." + material.name();
         if (!worth.getBoolean(path + ".sellable", false)) return 0;
-        return Math.max(0, worth.getDouble(path + ".price", 0));
+        double basePrice = Math.max(0, worth.getDouble(path + ".price", 0));
+        double multiplier = Math.max(0, getConfig().getDouble("economy.price-multiplier", 3.0));
+        return roundMoney(basePrice * multiplier);
     }
 
     private boolean isSellable(ItemStack item) {
