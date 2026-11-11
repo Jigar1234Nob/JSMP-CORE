@@ -19,7 +19,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
-import org.bukkit.event.player.PlayerPickupItemEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -508,8 +508,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     @EventHandler
-    public void onPickup(PlayerPickupItemEvent event) {
-        decorateWorth(event.getItem().getItemStack());
+    public void onPickup(EntityPickupItemEvent event) {
+        if (event.getEntity() instanceof Player) decorateWorth(event.getItem().getItemStack());
     }
 
     @EventHandler
@@ -687,7 +687,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 msg(target, "&aYou received &e" + money(amount) + " &afrom &f" + player.getName() + "&a.");
                 return true;
             }
-            case "jsmpmoney" -> {
+            case "money" -> {
                 if (!sender.hasPermission("jsmp.admin")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (args.length != 3) { msg(sender, "&cUsage: /jsmpmoney <give|take|set> <player> <amount>"); return true; }
                 UUID target = findPlayer(args[1]);
