@@ -43,6 +43,15 @@ commands:
     aliases: [maintanence]
     description: Toggles server maintenance mode.
     usage: /maintenance [on|off|toggle]
+  sethome:
+    description: Saves a named home.
+    usage: /sethome <name>
+  home:
+    description: Teleports to a saved home.
+    usage: /home <name>
+  jsmp:
+    description: JSMPCore administration commands.
+    usage: /jsmp reload
 
 permissions:
   jsmp.shop:
@@ -66,6 +75,8 @@ permissions:
   jsmp.anticheat.bypass:
     default: op
   jsmp.rtp:
+    default: true
+  jsmp.home:
     default: true
   jsmp.maintenance:
     default: op
