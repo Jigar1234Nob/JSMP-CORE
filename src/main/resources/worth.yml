@@ -1,0 +1,22 @@
+# JSMPCore item prices.
+# The plugin appends every remaining item material from the Paper API on first startup.
+# Set sellable to false or price to 0.0 to disable buying and selling.
+items:
+  DIAMOND:
+    price: 90.0
+    sellable: true
+  EMERALD:
+    price: 60.0
+    sellable: true
+  NETHERITE_INGOT:
+    price: 250.0
+    sellable: true
+  DIRT:
+    price: 0.25
+    sellable: true
+  BEDROCK:
+    price: 0.0
+    sellable: false
+  BARRIER:
+    price: 0.0
+    sellable: false
