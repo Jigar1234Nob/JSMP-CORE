@@ -1,5 +1,6 @@
 # JSMPCore item prices.
-# The plugin appends every remaining item material from the Paper API on first startup.
+# Prices below are base values. economy.price-multiplier in config.yml applies to buying, selling and lore.
+# Rare special items (Elytra, Totems, Nether Stars, Shulker Boxes, etc.) are automatically disabled.
 # Set sellable to false or price to 0.0 to disable buying and selling.
 items:
   DIAMOND:
