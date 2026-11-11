@@ -920,7 +920,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         int streak = dailyStreak(player.getUniqueId());
         String today = LocalDate.now().toString();
         boolean claimed = today.equals(playerData.getString(dailyPath(player.getUniqueId()) + ".last-claim", ""));
-        int rewardIndex = claimed ? Math.max(0, streak - 1) % rewards.size() : streak % rewards.size();
+        int rewardIndex = claimed ? Math.max(0, Math.min(streak - 1, rewards.size() - 1)) : Math.min(streak, rewards.size() - 1);
         int required = dailyRequiredSeconds(player.getUniqueId());
         int played = dailyPlaySeconds(player.getUniqueId());
 
@@ -938,7 +938,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             lore.add("&7Tier: " + dailyTier(displayDay));
             lore.add("&7Reward: &f" + rewardName + " x" + amount);
             if (i == rewardIndex) lore.add(claimed ? "&aClaimed today" : "&eYour next reward");
-            else if (claimed && i == (streak % rewards.size())) lore.add("&eTomorrow's reward");
+            else if (claimed && i == Math.min(streak, rewards.size() - 1)) lore.add("&eTomorrow's reward");
             else if (i < rewardIndex) lore.add("&aPrevious streak reward");
             else lore.add("&8Upcoming reward");
             ItemStack icon = icon(material, (i == rewardIndex ? "&e" : "&f") + "Day " + displayDay, lore);
@@ -982,7 +982,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             return;
         }
         int streak = dailyStreak(uuid);
-        int rewardIndex = streak % rewards.size();
+        int rewardIndex = Math.min(streak, rewards.size() - 1);
         Map<?, ?> reward = rewards.get(rewardIndex);
         Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "")));
         if (material == null || material.isAir()) {
