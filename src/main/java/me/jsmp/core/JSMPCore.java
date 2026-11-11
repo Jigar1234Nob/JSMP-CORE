@@ -100,6 +100,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         saveDefaultConfig();
         worthFile = new File(getDataFolder(), "worth.yml");
         playersFile = new File(getDataFolder(), "players.yml");
+        if (!worthFile.exists()) saveResource("worth.yml", false);
         if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
             getLogger().severe("Could not create plugin data directory.");
             getServer().getPluginManager().disablePlugin(this);
@@ -291,7 +292,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 || n.endsWith("_CROSSBOW") || n.equals("TRIDENT") || n.equals("MACE") || n.equals("SHIELD")
                 || n.equals("WOLF_ARMOR") || n.equals("FISHING_ROD") || n.contains("ARROW")
                 || n.contains("TNT") || n.contains("FIREWORK") || n.contains("TOTEM")
-                || n.contains("CHARGE") || n.contains("SHEARS") || n.equals("FLINT_AND_STEEL"))
+                || n.contains("CHARGE") || n.contains("SHEARS") || n.equals("FLINT_AND_STEEL")
+                || n.equals("ENDER_PEARL") || n.equals("ENDER_EYE") || n.equals("WIND_CHARGE")
+                || n.equals("BREEZE_ROD") || n.equals("SNOWBALL") || n.equals("EGG"))
             return ShopCategory.ARSENAL;
         if (n.contains("DIAMOND") || n.contains("EMERALD") || n.contains("AMETHYST")
                 || n.contains("LAPIS") || n.contains("RAW_IRON") || n.contains("RAW_GOLD")
