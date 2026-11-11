@@ -54,3 +54,101 @@ rtp:
 # Maintenance mode can also be toggled with /maintenance.
 maintenance:
   enabled: false
+
+# Daily login rewards. Only time spent online outside /afk counts.
+# The reward calendar contains unique prizes for its 30-day cycle.
+daily:
+  base-play-minutes: 10
+  extra-minutes-per-streak-day: 5
+  maximum-play-minutes: 120
+  rewards:
+    - material: BREAD
+      amount: 8
+      name: Bread bundle
+    - material: IRON_INGOT
+      amount: 8
+      name: Iron ingots
+    - material: GOLD_INGOT
+      amount: 4
+      name: Gold ingots
+    - material: DIAMOND
+      amount: 1
+      name: Diamond
+    - material: ENDER_PEARL
+      amount: 8
+      name: Ender pearls
+    - material: EXPERIENCE_BOTTLE
+      amount: 16
+      name: Bottles o' enchanting
+    - material: GOLDEN_APPLE
+      amount: 2
+      name: Golden apples
+    - material: OBSIDIAN
+      amount: 16
+      name: Obsidian
+    - material: EMERALD
+      amount: 3
+      name: Emeralds
+    - material: DIAMOND_BLOCK
+      amount: 1
+      name: Diamond block
+    - material: NAME_TAG
+      amount: 2
+      name: Name tags
+    - material: ENCHANTED_BOOK
+      amount: 1
+      name: Enchanted book
+    - material: TOTEM_OF_UNDYING
+      amount: 1
+      name: Totem of undying
+    - material: NETHERITE_INGOT
+      amount: 1
+      name: Netherite ingot
+    - material: SHULKER_BOX
+      amount: 1
+      name: Shulker box
+    - material: ELYTRA
+      amount: 1
+      name: Elytra
+    - material: BEACON
+      amount: 1
+      name: Beacon
+    - material: HEART_OF_THE_SEA
+      amount: 1
+      name: Heart of the sea
+    - material: TRIDENT
+      amount: 1
+      name: Trident
+    - material: NETHER_STAR
+      amount: 2
+      name: Nether stars
+    - material: ENCHANTED_GOLDEN_APPLE
+      amount: 1
+      name: Enchanted golden apple
+    - material: END_CRYSTAL
+      amount: 8
+      name: End crystals
+    - material: WITHER_SKELETON_SKULL
+      amount: 3
+      name: Wither skeleton skulls
+    - material: CONDUIT
+      amount: 1
+      name: Conduit
+    - material: NETHERITE_BLOCK
+      amount: 1
+      name: Netherite block
+    - material: DRAGON_HEAD
+      amount: 1
+      name: Dragon head
+    - material: DRAGON_EGG
+      amount: 1
+      name: Dragon egg
+    - material: MACE
+      amount: 1
+      name: Mace
+    - material: MUSIC_DISC_5
+      amount: 1
+      name: Music disc 5
+    - material: NETHERITE_UPGRADE_SMITHING_TEMPLATE
+      amount: 1
+      name: Netherite upgrade template
