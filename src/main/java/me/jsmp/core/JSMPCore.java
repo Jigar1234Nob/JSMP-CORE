@@ -26,6 +26,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
+import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -337,7 +338,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         });
         double value = worth(stack.getType());
         if (value > 0) {
-            lore.add(color("&7Worth: &a" + money(value) + " &8each"));
+            String worthLine = color("&7Worth: &a" + money(value) + " &8each");
+            if (lore.contains(worthLine)) return;
+            lore.add(worthLine);
             meta.setLore(lore);
             meta.getPersistentDataContainer().set(worthLoreKey, PersistentDataType.BYTE, (byte) 1);
             stack.setItemMeta(meta);
@@ -505,6 +508,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     @EventHandler
     public void onHeld(PlayerItemHeldEvent event) {
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(event.getPlayer()));
+    }
+
+    @EventHandler
+    public void onInventorySlotChange(PlayerInventorySlotChangeEvent event) {
+        Bukkit.getScheduler().runTask(this, () -> {
+            ItemStack current = event.getPlayer().getInventory().getItem(event.getSlot());
+            decorateWorth(current);
+        });
     }
 
     @EventHandler
