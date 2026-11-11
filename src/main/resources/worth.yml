@@ -1,21 +1,21 @@
 # Curated JSMPCore shop prices.
 # Blocks remain available. Only common resources, farming supplies and food are included alongside blocks.
 # Netherite, weapons, armour, tools, potions and rare or unnecessary items are excluded.
-# Prices below are base values. economy.price-multiplier in config.yml applies to buying, selling and lore.
+# Every item price is at least $1,001 before the configured economy multiplier. Disabled admin-only items keep sellable: false.
 # Set sellable to false or price to 0.0 to disable buying and selling.
 items:
   DIAMOND:
-    price: 90.0
+    price: 90000.0
     sellable: true
   EMERALD:
-    price: 60.0
+    price: 60000.0
     sellable: true
   DIRT:
-    price: 0.25
+    price: 1001.0
     sellable: true
   BEDROCK:
-    price: 0.0
+    price: 1001.0
     sellable: false
   BARRIER:
-    price: 0.0
+    price: 1001.0
     sellable: false
