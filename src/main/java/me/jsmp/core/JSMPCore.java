@@ -469,6 +469,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         double total = 0;
         int soldStacks = 0;
         double multiplier = Math.max(0, getConfig().getDouble("sell.sell-multiplier", 1.0));
+        if (multiplier <= 0) {
+            msg(player, "&cSelling is currently disabled by the server configuration.");
+            return;
+        }
         for (int slot = 0; slot < 45; slot++) {
             ItemStack item = inventory.getItem(slot);
             if (item == null || item.getType().isAir()) continue;
