@@ -18,6 +18,12 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.GameMode;
+import org.bukkit.util.Vector;
+
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.inventory.Inventory;
@@ -56,6 +62,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private final Set<UUID> vanishedPlayers = new HashSet<>();
     private final Set<UUID> godPlayers = new HashSet<>();
     private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
+    private final Map<UUID, Integer> antiCheatFlags = new HashMap<>();
+    private final Map<UUID, Long> lastAntiCheatFlag = new HashMap<>();
+    private final Map<UUID, Long> breakWindowStart = new HashMap<>();
+    private final Map<UUID, Integer> breakWindowCount = new HashMap<>();
     private NamespacedKey worthLoreKey;
 
     private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
@@ -560,6 +570,80 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
         }
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
+    }
+
+    private boolean bypassAntiCheat(Player player) {
+        return player.hasPermission("jsmp.anticheat.bypass") || player.getGameMode() == GameMode.CREATIVE
+                || player.getGameMode() == GameMode.SPECTATOR || vanishedPlayers.contains(player.getUniqueId());
+    }
+
+    private void flagAntiCheat(Player player, String reason) {
+        if (!getConfig().getBoolean("anti-cheat.enabled", true) || bypassAntiCheat(player)) return;
+        long now = System.currentTimeMillis();
+        UUID uuid = player.getUniqueId();
+        long last = lastAntiCheatFlag.getOrDefault(uuid, 0L);
+        int count = now - last > 60_000L ? 1 : antiCheatFlags.getOrDefault(uuid, 0) + 1;
+        antiCheatFlags.put(uuid, count);
+        lastAntiCheatFlag.put(uuid, now);
+        String line = "[JSMPCore AntiCheat] " + player.getName() + " flagged: " + reason + " ("
+                + count + "/" + getConfig().getInt("anti-cheat.punish-threshold", 5) + ")";
+        getLogger().warning(line);
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.hasPermission("jsmp.anticheat.alert")) online.sendMessage(color("&8[&cAntiCheat&8] &f" + line.substring(line.indexOf("] ") + 2)));
+        }
+        int threshold = getConfig().getInt("anti-cheat.punish-threshold", 5);
+        if (threshold > 0 && count >= threshold) {
+            antiCheatFlags.remove(uuid);
+            lastAntiCheatFlag.remove(uuid);
+            player.kickPlayer(color("&cJSMPCore AntiCheat\n&7Repeated suspicious activity detected."));
+        }
+    }
+
+    @EventHandler
+    public void onAntiCheatReach(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player) || !(event.getEntity() instanceof LivingEntity target)) return;
+        if (!getConfig().getBoolean("anti-cheat.check-reach", true) || bypassAntiCheat(player)) return;
+        if (player.isInsideVehicle() || player.isGliding()) return;
+        double maxReach = getConfig().getDouble("anti-cheat.max-reach", 4.2);
+        double distance = player.getEyeLocation().distance(target.getLocation().add(0, Math.min(1.0, target.getHeight() * 0.5), 0));
+        if (distance > maxReach) flagAntiCheat(player, "reach (" + String.format(Locale.US, "%.2f", distance) + " blocks)");
+    }
+
+    @EventHandler
+    public void onAntiCheatBlockBreak(org.bukkit.event.block.BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        if (!getConfig().getBoolean("anti-cheat.check-fast-break", true) || bypassAntiCheat(player)) return;
+        UUID uuid = player.getUniqueId();
+        long now = System.currentTimeMillis();
+        long start = breakWindowStart.getOrDefault(uuid, now);
+        int count = breakWindowCount.getOrDefault(uuid, 0);
+        if (now - start > 1000L) {
+            start = now;
+            count = 0;
+        }
+        count++;
+        breakWindowStart.put(uuid, start);
+        breakWindowCount.put(uuid, count);
+        if (count > getConfig().getInt("anti-cheat.max-block-breaks-per-second", 28)) {
+            flagAntiCheat(player, "unusually fast block breaking (" + count + "/s)");
+            breakWindowStart.put(uuid, now);
+            breakWindowCount.put(uuid, 0);
+        }
+    }
+
+    @EventHandler
+    public void onAntiCheatMove(PlayerMoveEvent event) {
+        if (!getConfig().getBoolean("anti-cheat.check-movement", false)) return;
+        Player player = event.getPlayer();
+        if (bypassAntiCheat(player) || player.isFlying() || player.getAllowFlight() || player.isGliding()
+                || player.isInsideVehicle() || player.isSwimming() || player.isInWater() || player.isClimbing()
+                || player.getVelocity().length() > 0.75) return;
+        if (event.getTo() == null || !event.getFrom().getWorld().equals(event.getTo().getWorld())) return;
+        double horizontal = Math.hypot(event.getTo().getX() - event.getFrom().getX(),
+                event.getTo().getZ() - event.getFrom().getZ());
+        if (horizontal > getConfig().getDouble("anti-cheat.max-horizontal-move-per-event", 1.25)) {
+            flagAntiCheat(player, "abnormal horizontal movement (" + String.format(Locale.US, "%.2f", horizontal) + ")");
+        }
     }
 
     @EventHandler
