@@ -372,7 +372,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void openShopItems(Player player, ShopCategory category, int page) {
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
-            if (!material.isItem() || material.isAir() || categoryFor(material) != category) continue;
+            if (!material.isItem() || material.isAir() || material == Material.SPLASH_POTION
+                    || material == Material.LINGERING_POTION || categoryFor(material) != category) continue;
             if (worth(material) <= 0) continue;
             items.add(material);
         }
@@ -564,23 +565,24 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 decorateWorth(event.getCurrentItem());
                 return;
             }
-            if (raw >= 45) {
+            if (raw >= 45 && raw < top.getSize()) {
                 event.setCancelled(true);
                 if (raw == 49) sellContents(player, top);
                 else if (raw == 53) player.closeInventory();
                 return;
             }
-            event.setCancelled(true);
-            if (event.isShiftClick() && raw >= top.getSize()) {
+            if (raw >= top.getSize() && event.isShiftClick()) {
+                event.setCancelled(true);
                 ItemStack source = event.getCurrentItem();
                 if (source == null || source.getType().isAir()) return;
                 ItemStack moving = source.clone();
-                if (addToSellMenu(top, moving)) event.setCurrentItem(null);
-                else {
-                    int moved = source.getAmount() - moving.getAmount();
-                    if (moved > 0) source.setAmount(source.getAmount() - moved);
-                }
+                addToSellMenu(top, moving);
+                int moved = source.getAmount() - moving.getAmount();
+                if (moving.getAmount() <= 0) event.setCurrentItem(null);
+                else if (moved > 0) source.setAmount(moving.getAmount());
+                return;
             }
+            Bukkit.getScheduler().runTask(this, () -> decorateInventory(player));
         }
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(player));
     }
