@@ -146,6 +146,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         playerData = YamlConfiguration.loadConfiguration(playersFile);
         economyDatabaseFile = new File(getDataFolder(), "economy.db");
         openEconomyDatabase();
+        if (economyDatabase == null) return;
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
         generateWorthCatalogue();
