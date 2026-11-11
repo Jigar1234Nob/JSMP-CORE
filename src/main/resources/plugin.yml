@@ -36,6 +36,9 @@ commands:
   ungod:
     description: Disables admin invulnerability.
     usage: /ungod
+  daily:
+    description: Opens the daily playtime rewards calendar.
+    usage: /daily
   afk:
     description: Toggles AFK mode and earns \$1,000 per completed minute.
     usage: /afk
