@@ -17,7 +17,9 @@ A Paper 26.3 economy and shop plugin for JSMP.
 - Admin economy commands: `/money <give|take|set> <player> <amount>` (also `/jsmpmoney`).
 - `/vanish` toggles admin visibility, including hiding vanished admins from players who join later.
 - `/god` and `/ungod` toggle admin invulnerability.
-- `/rtp` teleports players to a random safe location within the configured world border; first-time joiners are automatically sent to a random location.
+- `/rtp` teleports players to a random safe location within the configured world border after a 3-second chat/title countdown; RTP applies brief blindness and displays live coordinates in the action bar.
+- `/sethome <name>` saves unlimited named homes per player; `/home <name>` teleports to a saved home after the same 3-second countdown. `/home` lists saved homes.
+- `/jsmp reload` reloads the plugin config and worth catalogue without restarting Paper.
 - `/maintenance [on|off|toggle]` blocks new logins except operators and explicitly whitelisted players, and changes the server-list MOTD to orange `Server under maintenance`.
 - Lightweight server-side anti-cheat checks for suspicious reach and unusually fast block breaking, with staff alerts and configurable flag thresholds.
 - Paper anti-xray and buried-container obfuscation configuration examples in `docs/`.
@@ -70,7 +72,10 @@ items:
 | `/money set <player> <amount>` | Admin: set money |
 | `/vanish` | Admin: toggle vanish |
 | `/god` | Admin: enable invulnerability |
-| `/rtp` | Teleport to a random safe location |
+| `/rtp` | Teleport to a random safe location with countdown |
+| `/sethome <name>` | Save a named home |
+| `/home [name]` | List homes or teleport to one |
+| `/jsmp reload` | Admin: reload JSMPCore config and worth.yml |
 | `/maintenance [on|off|toggle]` | Operator: enable or disable maintenance mode |
 | `/ungod` | Admin: disable invulnerability |
 
