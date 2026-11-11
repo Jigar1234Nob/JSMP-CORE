@@ -1,0 +1,43 @@
+name: JSMPCore
+version: '${version}'
+main: me.jsmp.core.JSMPCore
+api-version: '26.3'
+description: JSMP server shop, item worth and player economy.
+authors: [Jigar]
+website: https://github.com/Jigar1234Nob/JSMP-CORE
+
+commands:
+  shop:
+    description: Opens the JSMP item shop.
+    usage: /shop
+  sell:
+    description: Opens the item selling GUI.
+    usage: /sell
+  balance:
+    aliases: [bal]
+    description: Checks a player's balance.
+    usage: /balance [player]
+  baltop:
+    description: Shows the richest JSMP players.
+    usage: /baltop
+  pay:
+    description: Pays another player.
+    usage: /pay <player> <amount>
+  jsmpmoney:
+    aliases: [moneyadmin]
+    description: Admin economy management.
+    usage: /jsmpmoney <give|take|set> <player> <amount>
+
+permissions:
+  jsmp.shop:
+    default: true
+  jsmp.sell:
+    default: true
+  jsmp.balance:
+    default: true
+  jsmp.baltop:
+    default: true
+  jsmp.pay:
+    default: true
+  jsmp.admin:
+    default: op
