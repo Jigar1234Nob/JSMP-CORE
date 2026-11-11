@@ -984,13 +984,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         int streak = dailyStreak(uuid);
         int rewardIndex = Math.min(streak, rewards.size() - 1);
         Map<?, ?> reward = rewards.get(rewardIndex);
-        Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "")));
+        Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "")));
         if (material == null || material.isAir()) {
             msg(player, "&cThe configured daily reward is invalid. Please contact an administrator.");
             return;
         }
         int amount;
-        try { amount = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+        try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
         catch (NumberFormatException exception) { amount = 1; }
         amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
         ItemStack prize = new ItemStack(material, amount);
@@ -1000,7 +1000,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         playerData.set(path + ".streak", newStreak);
         playerData.set(path + ".last-claim", today);
         saveDailyData();
-        String rewardName = String.valueOf(reward.getOrDefault("name", material.name().replace('_', ' ')));
+        String rewardName = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
         msg(player, "&aDaily reward claimed: &e" + rewardName + " x" + amount + "&a. Streak: &e" + newStreak + " day(s)&a.");
         player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.2f);
         player.closeInventory();
