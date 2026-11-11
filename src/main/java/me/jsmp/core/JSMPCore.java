@@ -580,7 +580,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
         lore.removeIf(line -> {
             String stripped = ChatColor.stripColor(line);
-            return stripped != null && stripped.startsWith("Worth: ");
+            return stripped != null && (stripped.startsWith("Worth: ")
+                    || stripped.startsWith("Buy: ") || stripped.startsWith("Sell: "));
         });
         double buyValue = buyPrice(stack.getType());
         double sellValue = sellPrice(stack.getType());
