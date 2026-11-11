@@ -26,6 +26,10 @@ import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.Location;
 import org.bukkit.HeightMap;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitTask;
+import net.kyori.adventure.text.Component;
 import org.bukkit.block.Block;
 import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.server.ServerListPingEvent;
@@ -55,6 +59,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -139,7 +144,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
 
@@ -581,13 +586,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         remember(joining);
         if (!joining.hasPlayedBefore() && !playerData.getBoolean("rtp.first-join-complete." + joining.getUniqueId(), false)) {
             Bukkit.getScheduler().runTask(this, () -> {
-                if (joining.isOnline() && randomTeleport(joining)) {
-                    playerData.set("rtp.first-join-complete." + joining.getUniqueId(), true);
-                    saveBalances();
-                    msg(joining, "&aWelcome! You have been randomly teleported to a new location.");
-                } else if (joining.isOnline()) {
-                    msg(joining, "&cCould not find a safe random location. Use /rtp to try again.");
-                }
+                if (!joining.isOnline()) return;
+                startTeleportCountdown(joining, "a random location", () -> {
+                    boolean success = randomTeleport(joining);
+                    if (success) {
+                        playerData.set("rtp.first-join-complete." + joining.getUniqueId(), true);
+                        saveBalances();
+                    }
+                    return success;
+                });
             });
         }
         for (UUID vanishedId : vanishedPlayers) {
@@ -618,6 +625,72 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     @EventHandler
     public void onMaintenancePing(ServerListPingEvent event) {
         if (maintenanceEnabled) event.setMotd(color("&6Server under maintenance"));
+    }
+
+    private void startTeleportCountdown(Player player, String destination, BooleanSupplier teleportAction) {
+        final int[] seconds = {3};
+        final BukkitTask[] task = new BukkitTask[1];
+        task[0] = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline()) { task[0].cancel(); return; }
+            if (seconds[0] > 0) {
+                String number = String.valueOf(seconds[0]);
+                msg(player, "&eTeleporting to &f" + destination + " &ein &6" + number + "&e...");
+                player.sendTitle(color("&6Teleporting"), color("&e" + number), 0, 20, 0);
+                seconds[0]--;
+                return;
+            }
+            task[0].cancel();
+            if (teleportAction.getAsBoolean()) {
+                msg(player, "&aTeleported to &f" + destination + "&a.");
+                player.sendTitle(color("&aTeleported!"), color("&f" + destination), 0, 35, 10);
+            } else {
+                msg(player, "&cTeleport failed. No safe destination was found.");
+                player.sendTitle(color("&cTeleport failed"), color("&7Try again."), 0, 35, 10);
+            }
+        }, 0L, 20L);
+    }
+
+    private void showCoordinatesWhileBlind(Player player) {
+        int duration = Math.max(20, getConfig().getInt("rtp.blindness-duration-ticks", 100));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, duration, 0, false, false, false));
+        final BukkitTask[] task = new BukkitTask[1];
+        task[0] = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline() || !player.hasPotionEffect(PotionEffectType.BLINDNESS)) {
+                task[0].cancel();
+                return;
+            }
+            Location location = player.getLocation();
+            player.sendActionBar(Component.text(color("&eX: &f" + location.getBlockX()
+                    + " &eY: &f" + location.getBlockY() + " &eZ: &f" + location.getBlockZ())));
+        }, 0L, 5L);
+    }
+
+    private void setHome(Player player, String name) {
+        String homeName = name.toLowerCase(Locale.ROOT);
+        Location location = player.getLocation();
+        String path = "homes." + player.getUniqueId() + "." + homeName;
+        playerData.set(path + ".world", location.getWorld().getName());
+        playerData.set(path + ".x", location.getX());
+        playerData.set(path + ".y", location.getY());
+        playerData.set(path + ".z", location.getZ());
+        playerData.set(path + ".yaw", location.getYaw());
+        playerData.set(path + ".pitch", location.getPitch());
+        saveBalances();
+        msg(player, "&aHome &f" + homeName + " &asaved.");
+    }
+
+    private Location getHome(Player player, String name) {
+        String path = "homes." + player.getUniqueId() + "." + name.toLowerCase(Locale.ROOT);
+        if (!playerData.contains(path + ".world")) return null;
+        World world = Bukkit.getWorld(playerData.getString(path + ".world", ""));
+        if (world == null) return null;
+        return new Location(world, playerData.getDouble(path + ".x"), playerData.getDouble(path + ".y"),
+                playerData.getDouble(path + ".z"), (float) playerData.getDouble(path + ".yaw"),
+                (float) playerData.getDouble(path + ".pitch"));
+    }
+
+    private boolean validHomeName(String name) {
+        return name != null && name.matches("[A-Za-z0-9_-]{1,16}");
     }
 
     private boolean randomTeleport(Player player) {
@@ -657,7 +730,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
             Location destination = new Location(world, x + 0.5, y, z + 0.5,
                     random.nextFloat() * 360.0f, 0.0f);
-            if (player.teleport(destination)) return true;
+            if (player.teleport(destination)) {
+                showCoordinatesWhileBlind(player);
+                return true;
+            }
         }
         return false;
     }
@@ -880,9 +956,58 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             case "rtp" -> {
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /rtp."); return true; }
                 if (!sender.hasPermission("jsmp.rtp")) { msg(sender, "&cYou do not have permission."); return true; }
-                msg(player, "&eFinding a safe random location...");
-                if (!randomTeleport(player)) msg(player, "&cCould not find a safe location. Try again.");
-                else msg(player, "&aYou have been randomly teleported.");
+                startTeleportCountdown(player, "a random location", () -> randomTeleport(player));
+                return true;
+            }
+            case "sethome" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can set homes."); return true; }
+                if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length != 1 || !validHomeName(args[0])) {
+                    msg(sender, "&cUsage: /sethome <name> (1-16 letters, numbers, _ or -)");
+                    return true;
+                }
+                setHome(player, args[0]);
+                return true;
+            }
+            case "home" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use homes."); return true; }
+                if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length == 0) {
+                    ConfigurationSection homes = playerData.getConfigurationSection("homes." + player.getUniqueId());
+                    if (homes == null || homes.getKeys(false).isEmpty()) {
+                        msg(player, "&eYou have no homes. Set one with /sethome <name>.");
+                    } else {
+                        msg(player, "&6Your homes: &f" + String.join("&7, &f", homes.getKeys(false)));
+                    }
+                    return true;
+                }
+                if (args.length != 1 || !validHomeName(args[0])) {
+                    msg(player, "&cUsage: /home <name>");
+                    return true;
+                }
+                if (getHome(player, args[0]) == null) {
+                    msg(player, "&cThat home does not exist or its world is not loaded.");
+                    return true;
+                }
+                startTeleportCountdown(player, "home " + args[0].toLowerCase(Locale.ROOT), () -> {
+                    Location destination = getHome(player, args[0]);
+                    return destination != null && player.teleport(destination);
+                });
+                return true;
+            }
+            case "jsmp" -> {
+                if (!sender.hasPermission("jsmp.admin")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length != 1 || !args[0].equalsIgnoreCase("reload")) {
+                    msg(sender, "&cUsage: /jsmp reload");
+                    return true;
+                }
+                reloadConfig();
+                worth = YamlConfiguration.loadConfiguration(worthFile);
+                maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
+                generateWorthCatalogue();
+                applyMaintenanceMotd();
+                for (Player online : Bukkit.getOnlinePlayers()) decorateInventory(online);
+                msg(sender, "&aJSMPCore configuration and worth.yml reloaded.");
                 return true;
             }
             case "maintenance" -> {
