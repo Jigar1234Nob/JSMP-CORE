@@ -23,8 +23,8 @@ commands:
   pay:
     description: Pays another player.
     usage: /pay <player> <amount>
-  jsmpmoney:
-    aliases: [moneyadmin]
+  money:
+    aliases: [jsmpmoney, moneyadmin]
     description: Admin economy management.
     usage: /jsmpmoney <give|take|set> <player> <amount>
 
