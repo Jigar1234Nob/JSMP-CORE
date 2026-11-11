@@ -22,3 +22,17 @@ economy:
 
 messages:
   prefix: "&8[&6JSMP&8] &r"
+
+# Built-in lightweight server-side cheat checks.
+# This is not a replacement for a dedicated packet-level anti-cheat.
+anti-cheat:
+  enabled: true
+  check-reach: true
+  check-fast-break: true
+  # Movement checks are opt-in because latency, knockback and server mechanics can cause false positives.
+  check-movement: false
+  max-reach: 4.2
+  max-block-breaks-per-second: 28
+  max-horizontal-move-per-event: 1.25
+  # A player is kicked after this many flags within 60 seconds. Set to 0 for alerts/logging only.
+  punish-threshold: 5
