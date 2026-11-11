@@ -27,6 +27,15 @@ commands:
     aliases: [jsmpmoney, moneyadmin]
     description: Admin economy management.
     usage: /money <give|take|set> <player> <amount>
+  vanish:
+    description: Toggles admin vanish.
+    usage: /vanish
+  god:
+    description: Enables admin invulnerability.
+    usage: /god
+  ungod:
+    description: Disables admin invulnerability.
+    usage: /ungod
 
 permissions:
   jsmp.shop:
@@ -40,4 +49,8 @@ permissions:
   jsmp.pay:
     default: true
   jsmp.admin:
+    default: op
+  jsmp.vanish:
+    default: op
+  jsmp.god:
     default: op
