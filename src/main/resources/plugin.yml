@@ -26,7 +26,7 @@ commands:
   money:
     aliases: [jsmpmoney, moneyadmin]
     description: Admin economy management.
-    usage: /jsmpmoney <give|take|set> <player> <amount>
+    usage: /money <give|take|set> <player> <amount>
 
 permissions:
   jsmp.shop:
