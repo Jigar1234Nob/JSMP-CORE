@@ -2,7 +2,7 @@ name: Build JSMPCore
 
 on:
   push:
-    branches: [main, feature/team-system]
+    branches: [main, feature/team-motd-recipe-economy]
     paths-ignore:
       - 'JSMPCore.jar'
   pull_request:
