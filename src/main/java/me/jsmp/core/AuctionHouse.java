@@ -35,7 +35,7 @@ import java.sql.Statement;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -46,7 +46,7 @@ public final class AuctionHouse implements CommandExecutor, Listener {
     private static final int MENU_SIZE = 54;
     private final JSMPCore plugin;
     private final Connection database;
-    private final Set<UUID> searching = new HashSet<>();
+    private final Set<UUID> searching = ConcurrentHashMap.newKeySet();
 
     private enum MenuType { BROWSE, MY_LISTINGS, CLAIMS, CONFIRM }
 
