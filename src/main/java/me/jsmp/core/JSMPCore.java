@@ -505,8 +505,16 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n)) return 0.0;
         if (n.contains("NETHERITE")) return 0.0;
         if (n.contains("ANCIENT_DEBRIS")) return 180.0;
-        if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) return n.endsWith("_BLOCK") ? 900.0 : 90.0;
-        if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) return n.endsWith("_BLOCK") ? 600.0 : 60.0;
+        if (n.endsWith("_DIAMOND_ORE") || n.equals("DIAMOND")) return 90.0;
+        if (n.endsWith("_EMERALD_ORE") || n.equals("EMERALD")) return 60.0;
+        if (n.equals("DIAMOND_BLOCK")) return 900.0;
+        if (n.equals("EMERALD_BLOCK")) return 600.0;
+        if (n.endsWith("_IRON_ORE") || n.equals("RAW_IRON")) return 8.0;
+        if (n.endsWith("_GOLD_ORE") || n.equals("RAW_GOLD")) return 14.0;
+        if (n.endsWith("_COPPER_ORE") || n.equals("RAW_COPPER")) return 4.0;
+        if (n.endsWith("_REDSTONE_ORE")) return 2.5;
+        if (n.endsWith("_LAPIS_ORE")) return 4.0;
+        if (n.endsWith("_COAL_ORE")) return 3.0;
         if (n.equals("OBSIDIAN") || n.equals("CRYING_OBSIDIAN")) return 18.0;
         if (n.contains("AMETHYST")) return 8.0;
         if (n.contains("GOLD")) return n.endsWith("_INGOT") ? 14.0 : 3.0;
