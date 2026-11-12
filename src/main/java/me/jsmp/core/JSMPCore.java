@@ -178,6 +178,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
+        new TeamManager(this);
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new JSMPCoreExpansion(this).register();
             getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
