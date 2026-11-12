@@ -592,7 +592,9 @@ public final class AuctionHouse implements CommandExecutor, Listener {
 
     private void fill(Inventory inventory) {
         ItemStack pane = button(Material.BLACK_STAINED_GLASS_PANE, " ");
-        for (int slot = 45; slot < MENU_SIZE; slot++) inventory.setItem(slot, pane);
+        for (int slot = Math.max(0, inventory.getSize() - 9); slot < inventory.getSize(); slot++) {
+            inventory.setItem(slot, pane);
+        }
     }
 
     private void giveItem(Player player, ItemStack item) {
