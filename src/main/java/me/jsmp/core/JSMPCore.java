@@ -120,7 +120,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE, WORTH_ADMIN, WORTH_ADMIN_ITEM }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -218,7 +218,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             new JSMPCoreExpansion(this).register();
             getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
         }
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily", "shopadmin")) {
+        for (String command : List.of("shop", "sell", "worth", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily", "shopadmin")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
         try {
@@ -970,6 +970,49 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         inv.setItem(49,icon(Material.ARROW,"&eCancel",List.of()));player.openInventory(inv);
     }
 
+    private void openWorthAdmin(Player player, int page) {
+        if (!canManageShop(player)) { msg(player, "&cYou do not have permission."); return; }
+        List<Material> materials = java.util.Arrays.stream(Material.values()).filter(this::isShopCatalogueItem)
+                .sorted(Comparator.comparing(Material::name)).toList();
+        int maxPage = Math.max(0, (materials.size() - 1) / 45);
+        page = Math.max(0, Math.min(page, maxPage));
+        MenuHolder holder = new MenuHolder(MenuType.WORTH_ADMIN, null, page);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Worth Editor (" + (page + 1) + "/" + (maxPage + 1) + ")"));
+        holder.inventory = inv;
+        int start = page * 45;
+        for (int i = 0; i < 45 && start + i < materials.size(); i++) {
+            Material material = materials.get(start + i), dummy = material;
+            String path = "items." + material.name();
+            boolean enabled = worth.getBoolean(path + ".sellable", false);
+            inv.setItem(i, icon(material, "&f" + pretty(dummy), List.of("&7Buy: &e" + money(worth.getDouble(path + ".buy-price", 0)),
+                    "&7Sell: &a" + money(worth.getDouble(path + ".sell-price", 0)), enabled ? "&aEnabled" : "&cDisabled", "&eClick to edit")));
+        }
+        inv.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
+        inv.setItem(49, icon(Material.BARRIER, "&cClose", List.of()));
+        inv.setItem(53, icon(Material.ARROW, "&eNext page", List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openWorthAdminItem(Player player, Material material) {
+        if (!canManageShop(player) || material == null || !isShopCatalogueItem(material)) return;
+        String path = "items." + material.name();
+        double buy = worth.getDouble(path + ".buy-price", 0), sell = worth.getDouble(path + ".sell-price", 0);
+        boolean enabled = worth.getBoolean(path + ".sellable", false);
+        MenuHolder holder = new MenuHolder(MenuType.WORTH_ADMIN_ITEM, null, 0, material);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Worth: " + pretty(material)));
+        holder.inventory = inv;
+        inv.setItem(10, icon(Material.REDSTONE, "&cBuy -1", List.of("&7Current: " + money(buy), "&7Shift-click: -10")));
+        inv.setItem(11, icon(Material.EMERALD, "&aBuy +1", List.of("&7Current: " + money(buy), "&7Shift-click: +10")));
+        inv.setItem(13, icon(material, "&f" + pretty(material), List.of("&7Buy: &e" + money(buy), "&7Sell: &a" + money(sell), enabled ? "&aEnabled" : "&cDisabled")));
+        inv.setItem(15, icon(Material.RED_DYE, "&cSell -1", List.of("&7Current: " + money(sell), "&7Shift-click: -10")));
+        inv.setItem(16, icon(Material.LIME_DYE, "&aSell +1", List.of("&7Current: " + money(sell), "&7Shift-click: +10")));
+        inv.setItem(20, icon(Material.GOLD_INGOT, "&6Set buy price", List.of("&7Click, then type a number in chat")));
+        inv.setItem(24, icon(Material.GOLD_NUGGET, "&6Set sell price", List.of("&7Click, then type a number in chat")));
+        inv.setItem(31, icon(enabled ? Material.LIME_DYE : Material.GRAY_DYE, enabled ? "&aDisable item" : "&eEnable item", List.of("&7Toggle shop trading")));
+        inv.setItem(49, icon(Material.ARROW, "&eBack to item list", List.of()));
+        player.openInventory(inv);
+    }
+
     private void beginShopAdminInput(Player player,String mode) {
         pendingShopAdminInput.put(player.getUniqueId(),mode);player.closeInventory();
         msg(player,"&eType the requested value in chat. Type &ccancel &eto abort.");
@@ -991,7 +1034,24 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             } else if(mode.startsWith("rename:")){
                 String id=mode.substring(7);
                 if(worth.contains("categories."+id)){worth.set("categories."+id+".label",input);saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player);}
-            } else if(mode.startsWith("icon:")){
+            } else if (mode.startsWith("worth-buy:") || mode.startsWith("worth-sell:")) {
+                boolean buyField = mode.startsWith("worth-buy:");
+                String materialName = mode.substring(buyField ? 10 : 11);
+                Material material = Material.matchMaterial(materialName);
+                try {
+                    double value = Double.parseDouble(input);
+                    if (material == null || !isShopCatalogueItem(material) || !Double.isFinite(value) || value < 0) throw new IllegalArgumentException();
+                    String path = "items." + material.name();
+                    worth.set(path + (buyField ? ".buy-price" : ".sell-price"), roundMoney(value));
+                    if (value > 0 || worth.getDouble(path + (buyField ? ".sell-price" : ".buy-price"), 0) > 0) worth.set(path + ".sellable", true);
+                    saveWorth();
+                    msg(player, "&aUpdated " + pretty(material) + " " + (buyField ? "buy" : "sell") + " price to " + money(value) + ".");
+                    openWorthAdminItem(player, material);
+                } catch (IllegalArgumentException ex) {
+                    msg(player, "&cEnter a valid non-negative number. Price unchanged.");
+                    if (material != null) openWorthAdminItem(player, material);
+                }
+            } else if(mode.startsWith("icon:"){
                 String id=mode.substring(5);
                 try { Material iconMaterial=Material.valueOf(input.toUpperCase(Locale.ROOT)); if(!iconMaterial.isItem())throw new IllegalArgumentException(); worth.set("categories."+id+".icon",iconMaterial.name());saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player); }
                 catch(IllegalArgumentException ex){msg(player,"&cInvalid item material. Try again from the category editor.");ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);}
@@ -1827,6 +1887,44 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
         int raw = event.getRawSlot();
 
+        if (holder.type == MenuType.WORTH_ADMIN || holder.type == MenuType.WORTH_ADMIN_ITEM) {
+            event.setCancelled(true);
+            if (!canManageShop(player)) { player.closeInventory(); msg(player, "&cYou do not have permission."); return; }
+            if (holder.type == MenuType.WORTH_ADMIN) {
+                if (raw == 45) openWorthAdmin(player, holder.page - 1);
+                else if (raw == 53) openWorthAdmin(player, holder.page + 1);
+                else if (raw == 49) player.closeInventory();
+                else if (raw >= 0 && raw < 45) {
+                    ItemStack clicked = top.getItem(raw);
+                    if (clicked != null && !clicked.getType().isAir()) openWorthAdminItem(player, clicked.getType());
+                }
+                return;
+            }
+            Material material = holder.material;
+            String path = "items." + material.name();
+            if (raw == 49) { openWorthAdmin(player, 0); return; }
+            if (raw == 20 || raw == 24) {
+                beginShopAdminInput(player, (raw == 20 ? "worth-buy:" : "worth-sell:") + material.name());
+                msg(player, "&eEnter the new " + (raw == 20 ? "buy" : "sell") + " price for " + pretty(material) + ".");
+                return;
+            }
+            if (raw == 31) {
+                boolean enabled = !worth.getBoolean(path + ".sellable", false);
+                worth.set(path + ".sellable", enabled); saveWorth();
+                msg(player, enabled ? "&aItem enabled." : "&eItem disabled.");
+                openWorthAdminItem(player, material); return;
+            }
+            if (raw == 10 || raw == 11 || raw == 15 || raw == 16) {
+                double step = event.isShiftClick() ? 10.0 : 1.0;
+                boolean buyField = raw == 10 || raw == 11;
+                String key = buyField ? ".buy-price" : ".sell-price";
+                double next = Math.max(0, worth.getDouble(path + key, 0) + ((raw == 10 || raw == 15) ? -step : step));
+                worth.set(path + key, roundMoney(next)); worth.set(path + ".sellable", true);
+                saveWorth(); openWorthAdminItem(player, material);
+            }
+            return;
+        }
+
         if (holder.type == MenuType.SHOP_ADMIN || holder.type == MenuType.SHOP_ADMIN_CATEGORY
                 || holder.type == MenuType.SHOP_ADMIN_PICKER || holder.type == MenuType.SHOP_ADMIN_ITEM
                 || holder.type == MenuType.SHOP_ADMIN_MOVE) {
@@ -2017,6 +2115,26 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String name = command.getName().toLowerCase(Locale.ROOT);
         switch (name) {
+            case "worth" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can check item worth."); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("admin")) {
+                    if (!canManageShop(player)) { msg(player, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
+                    openWorthAdmin(player, 0); return true;
+                }
+                if (args.length != 0) { msg(player, "&cUsage: /worth [admin]"); return true; }
+                ItemStack held = player.getInventory().getItemInMainHand();
+                if (held == null || held.getType().isAir()) { msg(player, "&cHold an item in your main hand first."); return true; }
+                Material material = held.getType();
+                String path = "items." + material.name();
+                boolean enabled = worth.getBoolean(path + ".sellable", false) && !isRestrictedShopItem(material);
+                double buy = enabled ? buyPrice(material) : 0, sell = enabled ? sellPrice(material) : 0;
+                int amount = held.getAmount();
+                msg(player, "&6&lWorth: &f" + pretty(material) + " &7(x" + amount + ")");
+                msg(player, "&7Buy: &e" + money(buy) + " &8each &7| &e" + money(buy * amount) + " &8stack");
+                msg(player, "&7Sell: &a" + money(sell) + " &8each &7| &a" + money(sell * amount) + " &8stack");
+                if (!enabled) msg(player, "&cThis item is not enabled for shop trading.");
+                return true;
+            }
             case "shopadmin" -> {
                 if (!sender.hasPermission("jsmp.shop.admin")) { msg(sender, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
                 if (args.length == 0) {
