@@ -14,6 +14,13 @@ sell:
   sell-multiplier: 1.0
   unknown-items-sellable: false
 
+auction-house:
+  enabled: true
+  # Maximum number of active listings each player can have.
+  max-active-listings: 5
+  # Listings expire after this many hours. Expired items can be collected with /ah claims.
+  listing-expiry-hours: 48
+
 economy:
   # Default sell price as a fraction of the buy price for migrated/new items.
   default-sell-rate: 0.5
