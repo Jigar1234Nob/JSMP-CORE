@@ -1848,7 +1848,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if (!sender.hasPermission("jsmp.shop.admin")) { msg(sender, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
                 if (args.length == 0) {
                     msg(sender, "&6Shop admin commands:");
-                    msg(sender, "&e/shopadmin category add <id> <label> <icon> [description]");
+                    msg(sender, "&e/shopadmin category add <id> <icon> <label> [description]");
                     msg(sender, "&e/shopadmin category remove <id>");
                     msg(sender, "&e/shopadmin item add <MATERIAL> <category> <buy> <sell>");
                     msg(sender, "&e/shopadmin item remove <MATERIAL>");
