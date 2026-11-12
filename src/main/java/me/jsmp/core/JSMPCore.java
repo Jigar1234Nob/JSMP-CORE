@@ -100,6 +100,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private String originalMotd;
     private NamespacedKey worthLoreKey;
     private AuctionHouse auctionHouse;
+    private MotdManager motdManager;
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -175,6 +176,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         generateWorthCatalogue();
         originalMotd = Bukkit.getMotd();
         maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
+        motdManager = new MotdManager(this, () -> maintenanceEnabled);
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
@@ -1023,7 +1025,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void applyMaintenanceMotd() {
-        Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
+        if (motdManager != null) motdManager.applyCurrent();
+        else Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
     }
 
     @EventHandler
@@ -1585,6 +1588,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                     return true;
                 }
                 reloadConfig();
+                if (motdManager != null) motdManager.reload();
                 worth = YamlConfiguration.loadConfiguration(worthFile);
                 maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
                 generateWorthCatalogue();
