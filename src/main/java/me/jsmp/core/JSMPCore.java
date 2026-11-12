@@ -585,7 +585,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void migrateRecipeWorthPrices() {
-        if (getConfig().getBoolean("economy.recipe-pricing-migration-v1", false)) return;
+        if (getConfig().getBoolean("economy.recipe-pricing-migration-v2", false)) return;
         double sellRate = Math.max(0.0, Math.min(1.0, getConfig().getDouble("economy.default-sell-rate", 0.5)));
         int updated = 0;
         for (Material material : Material.values()) {
@@ -595,7 +595,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             double oldBuy = legacyGeneratedBuyPrice(material);
             double configuredBuy = worth.getDouble(path + ".buy-price");
             double legacyFilePrice = worth.getDouble(path + ".price", Double.NaN);
-            boolean untouchedGeneratedPrice = Math.abs(configuredBuy - oldBuy) <= 0.01;
+            boolean generatedSellMatches = Math.abs(worth.getDouble(path + ".sell-price", -1.0)
+                    - roundMoney(configuredBuy * 0.5)) <= 0.01;
+            boolean looksLikeOldGeneratedTier = Math.abs(configuredBuy - 40.0) <= 0.01
+                    || Math.abs(configuredBuy - 60.0) <= 0.01 || configuredBuy >= 1001.0;
+            boolean untouchedGeneratedPrice = Math.abs(configuredBuy - oldBuy) <= 0.01
+                    || (looksLikeOldGeneratedTier && generatedSellMatches);
             boolean untouchedLegacyPrice = Double.isFinite(legacyFilePrice)
                     && (Math.abs(legacyFilePrice * 1000.0 - oldBuy) <= 0.01
                     || (oldBuy == 40.0 && legacyFilePrice >= 0.0 && legacyFilePrice <= 2.0)
@@ -616,7 +621,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             if (untouchedLegacyPrice) worth.set(path + ".price", null);
             updated++;
         }
-        getConfig().set("economy.recipe-pricing-migration-v1", true);
+        getConfig().set("economy.recipe-pricing-migration-v2", true);
         saveConfig();
         saveWorth();
         getLogger().info("Recipe-based economy pricing updated " + updated
