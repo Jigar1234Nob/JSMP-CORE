@@ -37,6 +37,20 @@ public final class JSMPCoreExpansion extends PlaceholderExpansion {
         if (params.equalsIgnoreCase("balance")) {
             return plugin.getBalancePlaceholder(player.getUniqueId());
         }
+        TeamManager teams = TeamManager.getInstance();
+        if (teams != null) {
+            if (params.equalsIgnoreCase("team") || params.equalsIgnoreCase("team_name")) {
+                String teamName = teams.getTeamName(player.getUniqueId());
+                return teamName.isBlank() ? "None" : teamName;
+            }
+            if (params.equalsIgnoreCase("team_prefix")) {
+                return teams.getTeamPrefix(player.getUniqueId());
+            }
+            if (params.equalsIgnoreCase("team_tag")) {
+                String teamName = teams.getTeamName(player.getUniqueId());
+                return teamName.isBlank() ? "" : "&8[&6" + teamName + "&8]";
+            }
+        }
         return null;
     }
 }
