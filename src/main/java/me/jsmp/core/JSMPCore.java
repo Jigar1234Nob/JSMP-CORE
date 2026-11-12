@@ -355,73 +355,74 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private void generateWorthCatalogue() {
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
+
         int added = 0;
-        boolean removed = false;
-        boolean applyLowValuePriceUpdate = !getConfig().getBoolean("economy.low-value-price-migration-v2", false);
-        boolean applyBuySellPriceMigration = !getConfig().getBoolean("economy.buy-sell-price-migration-v1", false);
         double minimumPrice = 1001.0;
-        ConfigurationSection existing = worth.getConfigurationSection("items");
-        if (existing != null) {
-            for (String key : new ArrayList<>(existing.getKeys(false))) {
-                Material material = Material.matchMaterial(key);
-                if (!isShopCatalogueItem(material)) {
-                    worth.set("items." + key, null);
-                    removed = true;
-                }
-            }
-        }
+        double defaultSellRate = Math.max(0.0, Math.min(1.0,
+                getConfig().getDouble("economy.default-sell-rate", 0.5)));
+
+        /*
+         * worth.yml is server-owner data. Existing entries are authoritative:
+         * never remove them or replace their configured prices during startup.
+         * Only append catalogue entries or missing fields for newly-added items.
+         */
         for (Material material : Material.values()) {
             if (!isShopCatalogueItem(material)) continue;
+
             String path = "items." + material.name();
+            boolean changed = false;
+
             if (isRestrictedShopItem(material)) {
-                worth.set(path + ".buy-price", minimumPrice);
-                worth.set(path + ".sell-price", 0.0);
-                worth.set(path + ".sellable", false);
-                worth.set(path + ".price", null);
+                if (!worth.contains(path + ".buy-price")) {
+                    worth.set(path + ".buy-price", minimumPrice);
+                    changed = true;
+                }
+                if (!worth.contains(path + ".sell-price")) {
+                    worth.set(path + ".sell-price", 0.0);
+                    changed = true;
+                }
+                if (!worth.contains(path + ".sellable")) {
+                    worth.set(path + ".sellable", false);
+                    changed = true;
+                }
+                added += changed ? 1 : 0;
                 continue;
             }
 
-            double oldPrice = worth.getDouble(path + ".price", -1.0);
             double buyPrice;
             if (worth.contains(path + ".buy-price")) {
                 buyPrice = worth.getDouble(path + ".buy-price");
-            } else if (oldPrice >= 0) {
-                buyPrice = oldPrice;
+            } else if (worth.contains(path + ".price")) {
+                // One-time compatibility with older worth.yml files.
+                buyPrice = worth.getDouble(path + ".price");
+                worth.set(path + ".buy-price", roundMoney(Math.max(0.01, buyPrice)));
+                changed = true;
             } else {
                 buyPrice = defaultWorth(material) <= 5.0
-                        ? lowValuePrice(material) : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
-                added++;
+                        ? lowValuePrice(material)
+                        : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
+                worth.set(path + ".buy-price", roundMoney(buyPrice));
+                changed = true;
             }
 
-            if (applyLowValuePriceUpdate && defaultWorth(material) <= 5.0) {
-                buyPrice = lowValuePrice(material);
+            if (!worth.contains(path + ".sell-price")) {
+                worth.set(path + ".sell-price", roundMoney(Math.max(0.0, buyPrice * defaultSellRate)));
+                changed = true;
             }
-            buyPrice = Math.max(0.01, buyPrice);
-
-            double sellPrice;
-            if (worth.contains(path + ".sell-price")) {
-                sellPrice = worth.getDouble(path + ".sell-price");
-            } else if (applyBuySellPriceMigration) {
-                sellPrice = buyPrice * Math.max(0.0, getConfig().getDouble("economy.default-sell-rate", 0.5));
-            } else {
-                sellPrice = buyPrice * 0.5;
+            if (!worth.contains(path + ".sellable")) {
+                worth.set(path + ".sellable", true);
+                changed = true;
             }
 
-            worth.set(path + ".buy-price", roundMoney(buyPrice));
-            worth.set(path + ".sell-price", roundMoney(Math.max(0.0, Math.min(sellPrice, buyPrice))));
-            worth.set(path + ".price", null);
-            if (!worth.contains(path + ".sellable")) worth.set(path + ".sellable", true);
+            if (changed) added++;
         }
 
-        if (applyLowValuePriceUpdate) {
-            getConfig().set("economy.low-value-price-migration-v2", true);
+        if (added > 0) {
+            saveWorth();
+            getLogger().info("Added " + added + " missing item entries to worth.yml. Existing prices were preserved.");
+        } else {
+            getLogger().info("Worth catalogue loaded. Existing worth.yml prices were preserved.");
         }
-        if (applyBuySellPriceMigration) {
-            getConfig().set("economy.buy-sell-price-migration-v1", true);
-        }
-        if (applyLowValuePriceUpdate || applyBuySellPriceMigration) saveConfig();
-        if (added > 0 || removed || applyLowValuePriceUpdate || applyBuySellPriceMigration || !worthFile.exists()) saveWorth();
-        getLogger().info("Worth catalogue ready with separate buy and sell prices.");
     }
 
     private double lowValuePrice(Material material) {
