@@ -14,9 +14,25 @@ sell:
   sell-multiplier: 1.0
   unknown-items-sellable: false
 
+auction-house:
+  enabled: true
+  # Maximum number of active listings each player can have.
+  max-active-listings: 5
+  # Listings expire after this many hours. Expired items can be collected with /ah claims.
+  listing-expiry-hours: 48
+
 economy:
-  # Multiplies every configured worth price for shop purchases, selling and item lore.
-  price-multiplier: 3.0
+  # Default sell price as a fraction of the buy price for migrated/new items.
+  default-sell-rate: 0.35
+  # Internal migration markers. Keep true for new installations.
+  high-price-migration-v1: true
+  low-value-price-migration-v2: true
+  buy-sell-price-migration-v1: true
+  # One-time migration updates untouched generated prices using crafting recipes.
+  recipe-pricing-migration-v1: true
+  recipe-pricing-migration-v2: false
+  # Extra shop premium applied after calculating a crafted item's ingredient cost.
+  recipe-price-premium: 0.20
   baltop-size: 10
   minimum-payment: 0.01
 
@@ -44,7 +60,120 @@ rtp:
   max-radius: 0
   border-margin: 16
   attempts: 32
+  # Blindness duration after RTP, in ticks (100 ticks = 5 seconds).
+  blindness-duration-ticks: 100
 
 # Maintenance mode can also be toggled with /maintenance.
 maintenance:
   enabled: false
+
+# Daily login rewards. Only time spent online outside /afk counts.
+# The reward calendar contains unique prizes for its 30-day cycle.
+daily:
+  # Only active, non-AFK playtime counts.
+  base-play-minutes: 10
+  extra-minutes-per-streak-day: 0
+  maximum-play-minutes: 10
+
+  # This is a reward POOL, not a fixed calendar. Each player receives
+  # an independently shuffled 30-day calendar, saved in players.yml.
+  # Keep rewards modest. Avoid boss drops, end-game gear and progression skips.
+  rewards:
+    - material: BREAD
+      amount: 4
+      name: Bread
+    - material: COAL
+      amount: 8
+      name: Coal
+    - material: COBBLESTONE
+      amount: 32
+      name: Cobblestone
+    - material: OAK_LOG
+      amount: 8
+      name: Oak logs
+    - material: COOKED_BEEF
+      amount: 4
+      name: Cooked beef
+    - material: IRON_NUGGET
+      amount: 16
+      name: Iron nuggets
+    - material: TORCH
+      amount: 16
+      name: Torches
+    - material: ARROW
+      amount: 16
+      name: Arrows
+    - material: STRING
+      amount: 8
+      name: String
+    - material: LEATHER
+      amount: 4
+      name: Leather
+    - material: IRON_INGOT
+      amount: 2
+      name: Iron ingots
+    - material: GOLD_INGOT
+      amount: 2
+      name: Gold ingots
+    - material: LAPIS_LAZULI
+      amount: 8
+      name: Lapis lazuli
+    - material: REDSTONE
+      amount: 8
+      name: Redstone
+    - material: EXPERIENCE_BOTTLE
+      amount: 2
+      name: Bottles o' enchanting
+    - material: ENDER_PEARL
+      amount: 1
+      name: Ender pearl
+    - material: OBSIDIAN
+      amount: 4
+      name: Obsidian
+    - material: EMERALD
+      amount: 1
+      name: Emerald
+    - material: DIAMOND
+      amount: 1
+      name: Diamond
+    - material: GOLDEN_APPLE
+      amount: 1
+      name: Golden apple
+    - material: NAME_TAG
+      amount: 1
+      name: Name tag
+    - material: SADDLE
+      amount: 1
+      name: Saddle
+    - material: BOOKSHELF
+      amount: 2
+      name: Bookshelves
+    - material: IRON_PICKAXE
+      amount: 1
+      name: Iron pickaxe
+    - material: SHIELD
+      amount: 1
+      name: Shield
+    - material: BOW
+      amount: 1
+      name: Bow
+    - material: WATER_BUCKET
+      amount: 1
+      name: Water bucket
+    - material: COPPER_INGOT
+      amount: 8
+      name: Copper ingots
+    - material: PRISMARINE_SHARD
+      amount: 4
+      name: Prismarine shards
+    - material: GLOWSTONE_DUST
+      amount: 4
+      name: Glowstone dust
+
+# Server list MOTD rotation. Use & colour codes.
+motd:
+  interval-seconds: 15
+  lines:
+    - "&6&lJSMP &8» &fSurvival, your way."
+    - "&eWelcome to &6&lJSMP &8| &fHave fun and play fair."
+    - "&bBuild. Trade. Survive. &8» &6JSMP"

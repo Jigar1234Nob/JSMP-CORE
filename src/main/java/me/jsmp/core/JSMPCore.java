@@ -5,6 +5,9 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.Sound;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -18,6 +21,8 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import io.papermc.paper.event.player.AsyncChatEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.entity.LivingEntity;
@@ -26,6 +31,10 @@ import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.Location;
 import org.bukkit.HeightMap;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitTask;
+import net.kyori.adventure.text.Component;
 import org.bukkit.block.Block;
 import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.server.ServerListPingEvent;
@@ -36,6 +45,9 @@ import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ShapelessRecipe;
+import org.bukkit.inventory.ShapedRecipe;
+import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
@@ -44,8 +56,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
@@ -53,8 +73,10 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.List;
 import java.util.Locale;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -62,12 +84,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private File worthFile;
     private File playersFile;
+    private File economyDatabaseFile;
+    private Connection economyDatabase;
     private FileConfiguration worth;
     private FileConfiguration playerData;
     private final Map<UUID, Double> balances = new LinkedHashMap<>();
     private final Map<UUID, String> playerNames = new LinkedHashMap<>();
+    private final Map<UUID, Map<String, Location>> homes = new LinkedHashMap<>();
     private final Set<UUID> vanishedPlayers = new HashSet<>();
     private final Set<UUID> godPlayers = new HashSet<>();
+    private final Map<UUID, AfkSession> afkPlayers = new HashMap<>();
+    private final Map<UUID, BukkitTask> dailyTasks = new HashMap<>();
+    private final Map<UUID, Integer> dailyUnsavedSeconds = new HashMap<>();
     private final Map<UUID, Boolean> previousInvulnerability = new HashMap<>();
     private final Map<UUID, Integer> antiCheatFlags = new HashMap<>();
     private final Map<UUID, Long> lastAntiCheatFlag = new HashMap<>();
@@ -76,8 +104,22 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private boolean maintenanceEnabled;
     private String originalMotd;
     private NamespacedKey worthLoreKey;
+    private AuctionHouse auctionHouse;
+    private MotdManager motdManager;
+    private final Map<Material, Double> recipePriceCache = new EnumMap<>(Material.class);
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL }
+    private static final class AfkSession {
+        private final BossBar bossBar;
+        private final BukkitTask task;
+        private int secondsRemaining = 60;
+
+        private AfkSession(BossBar bossBar, BukkitTask task) {
+            this.bossBar = bossBar;
+            this.task = task;
+        }
+    }
+
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -131,21 +173,41 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
         worth = YamlConfiguration.loadConfiguration(worthFile);
         playerData = YamlConfiguration.loadConfiguration(playersFile);
+        economyDatabaseFile = new File(getDataFolder(), "economy.db");
+        openEconomyDatabase();
+        if (economyDatabase == null) return;
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
+        loadHomes();
         generateWorthCatalogue();
+        migrateRecipeWorthPrices();
         originalMotd = Bukkit.getMotd();
         maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
+        motdManager = new MotdManager(this, () -> maintenanceEnabled);
         applyMaintenanceMotd();
 
         getServer().getPluginManager().registerEvents(this, this);
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance")) {
+        new TeamManager(this);
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            new JSMPCoreExpansion(this).register();
+            getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
+        }
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
+        }
+        try {
+            auctionHouse = new AuctionHouse(this);
+            auctionHouse.register();
+        } catch (SQLException exception) {
+            getLogger().severe("Could not initialize Auction House: " + exception.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
         }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             remember(player);
             decorateInventory(player);
+            startDailyTracking(player);
         }
         getLogger().info("JSMPCore enabled. Loaded " + worth.getConfigurationSection("items").getKeys(false).size()
                 + " item worth entries and " + balances.size() + " player balances.");
@@ -153,6 +215,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     @Override
     public void onDisable() {
+        for (UUID uuid : new ArrayList<>(afkPlayers.keySet())) stopAfk(uuid, false, false);
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (vanishedPlayers.contains(player.getUniqueId())) {
                 for (Player viewer : Bukkit.getOnlinePlayers()) viewer.showPlayer(this, player);
@@ -163,101 +226,406 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
         saveBalances();
         saveWorth();
+        for (UUID uuid : new ArrayList<>(dailyTasks.keySet())) stopDailyTracking(uuid);
+        if (auctionHouse != null) auctionHouse.close();
+        closeEconomyDatabase();
         if (originalMotd != null) Bukkit.setMotd(originalMotd);
     }
 
-    private void loadBalances() {
-        ConfigurationSection section = playerData.getConfigurationSection("players");
-        if (section == null) return;
-        for (String id : section.getKeys(false)) {
-            try {
-                UUID uuid = UUID.fromString(id);
-                balances.put(uuid, Math.max(0, section.getDouble(id + ".balance", 0)));
-                playerNames.put(uuid, section.getString(id + ".name", "Unknown"));
-            } catch (IllegalArgumentException ignored) {
-                getLogger().warning("Skipping invalid player UUID in players.yml: " + id);
+    private void openEconomyDatabase() {
+        try {
+            if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+                throw new IOException("Could not create plugin data directory");
             }
+            economyDatabase = DriverManager.getConnection("jdbc:sqlite:" + economyDatabaseFile.getAbsolutePath());
+            try (Statement statement = economyDatabase.createStatement()) {
+                statement.execute("PRAGMA journal_mode=WAL");
+                statement.execute("PRAGMA synchronous=FULL");
+                statement.execute("""
+                        CREATE TABLE IF NOT EXISTS balances (
+                            uuid TEXT PRIMARY KEY NOT NULL,
+                            player_name TEXT NOT NULL,
+                            balance REAL NOT NULL CHECK(balance >= 0)
+                        )
+                        """);
+                statement.execute("""
+                        CREATE TABLE IF NOT EXISTS homes (
+                            uuid TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            world TEXT NOT NULL,
+                            x REAL NOT NULL,
+                            y REAL NOT NULL,
+                            z REAL NOT NULL,
+                            yaw REAL NOT NULL,
+                            pitch REAL NOT NULL,
+                            PRIMARY KEY (uuid, name)
+                        )
+                        """);
+            }
+            getLogger().info("Economy database opened: " + economyDatabaseFile.getName());
+        } catch (SQLException | IOException exception) {
+            getLogger().severe("Could not open economy.db: " + exception.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+        }
+    }
+
+    private void loadBalances() {
+        if (economyDatabase == null) return;
+        try {
+            boolean databaseHasBalances;
+            try (Statement statement = economyDatabase.createStatement();
+                 ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM balances")) {
+                databaseHasBalances = result.next() && result.getInt(1) > 0;
+            }
+
+            if (databaseHasBalances) {
+                try (Statement statement = economyDatabase.createStatement();
+                     ResultSet result = statement.executeQuery("SELECT uuid, player_name, balance FROM balances")) {
+                    while (result.next()) {
+                        try {
+                            UUID uuid = UUID.fromString(result.getString("uuid"));
+                            balances.put(uuid, Math.max(0, result.getDouble("balance")));
+                            playerNames.put(uuid, result.getString("player_name"));
+                        } catch (IllegalArgumentException ignored) {
+                            getLogger().warning("Skipping invalid player UUID in economy.db.");
+                        }
+                    }
+                }
+                getLogger().info("Loaded " + balances.size() + " balances from economy.db.");
+                return;
+            }
+
+            // One-time migration: retain balances from the old players.yml file.
+            ConfigurationSection section = playerData.getConfigurationSection("players");
+            if (section != null) {
+                for (String id : section.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(id);
+                        balances.put(uuid, Math.max(0, section.getDouble(id + ".balance", 0)));
+                        playerNames.put(uuid, section.getString(id + ".name", "Unknown"));
+                    } catch (IllegalArgumentException ignored) {
+                        getLogger().warning("Skipping invalid player UUID in players.yml: " + id);
+                    }
+                }
+            }
+            saveBalances();
+            getLogger().info("Imported " + balances.size() + " existing balances into economy.db.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not load balances from economy.db: " + exception.getMessage());
         }
     }
 
     private void saveBalances() {
-        playerData.set("players", null);
-        for (UUID uuid : balances.keySet()) {
-            playerData.set("players." + uuid + ".balance", roundMoney(balances.getOrDefault(uuid, 0.0)));
-            playerData.set("players." + uuid + ".name", playerNames.getOrDefault(uuid, "Unknown"));
+        if (economyDatabase == null) {
+            getLogger().severe("Economy database is unavailable; balances were not saved.");
+            return;
         }
         try {
+            economyDatabase.setAutoCommit(false);
+            try (PreparedStatement statement = economyDatabase.prepareStatement(
+                    "INSERT INTO balances (uuid, player_name, balance) VALUES (?, ?, ?) "
+                            + "ON CONFLICT(uuid) DO UPDATE SET player_name=excluded.player_name, balance=excluded.balance")) {
+                for (UUID uuid : balances.keySet()) {
+                    statement.setString(1, uuid.toString());
+                    statement.setString(2, playerNames.getOrDefault(uuid, "Unknown"));
+                    statement.setDouble(3, roundMoney(balances.getOrDefault(uuid, 0.0)));
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+            economyDatabase.commit();
+            economyDatabase.setAutoCommit(true);
+
+            // Keep the old YAML balance mirror for compatibility, without touching homes.
+            for (UUID uuid : balances.keySet()) {
+                playerData.set("players." + uuid + ".balance", roundMoney(balances.getOrDefault(uuid, 0.0)));
+                playerData.set("players." + uuid + ".name", playerNames.getOrDefault(uuid, "Unknown"));
+            }
             playerData.save(playersFile);
-        } catch (IOException exception) {
-            getLogger().severe("Could not save players.yml: " + exception.getMessage());
+        } catch (SQLException | IOException exception) {
+            try {
+                economyDatabase.rollback();
+                economyDatabase.setAutoCommit(true);
+            } catch (SQLException rollbackException) {
+                getLogger().severe("Could not roll back economy database transaction: " + rollbackException.getMessage());
+            }
+            getLogger().severe("Could not save player balances: " + exception.getMessage());
+        }
+    }
+
+    private void closeEconomyDatabase() {
+        if (economyDatabase == null) return;
+        try {
+            economyDatabase.close();
+            economyDatabase = null;
+        } catch (SQLException exception) {
+            getLogger().severe("Could not close economy.db cleanly: " + exception.getMessage());
         }
     }
 
     private void generateWorthCatalogue() {
+        recipePriceCache.clear();
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
+
         int added = 0;
-        boolean removed = false;
-        ConfigurationSection existing = worth.getConfigurationSection("items");
-        if (existing != null) {
-            for (String key : new ArrayList<>(existing.getKeys(false))) {
-                Material material = Material.matchMaterial(key);
-                if (!isShopCatalogueItem(material)) {
-                    worth.set("items." + key, null);
-                    removed = true;
-                }
-            }
-        }
+        double minimumPrice = 1001.0;
+        double defaultSellRate = Math.max(0.0, Math.min(1.0,
+                getConfig().getDouble("economy.default-sell-rate", 0.5)));
+
+        /*
+         * worth.yml is server-owner data. Existing entries are authoritative:
+         * never remove them or replace their configured prices during startup.
+         * Only append catalogue entries or missing fields for newly-added items.
+         */
         for (Material material : Material.values()) {
             if (!isShopCatalogueItem(material)) continue;
+
             String path = "items." + material.name();
+            boolean changed = false;
+
             if (isRestrictedShopItem(material)) {
-                worth.set(path + ".price", 0.0);
-                worth.set(path + ".sellable", false);
+                if (!worth.contains(path + ".buy-price")) {
+                    worth.set(path + ".buy-price", minimumPrice);
+                    changed = true;
+                }
+                if (!worth.contains(path + ".sell-price")) {
+                    worth.set(path + ".sell-price", 0.0);
+                    changed = true;
+                }
+                if (!worth.contains(path + ".sellable")) {
+                    worth.set(path + ".sellable", false);
+                    changed = true;
+                }
+                added += changed ? 1 : 0;
                 continue;
             }
-            if (!worth.contains(path + ".price")) {
-                double price = defaultWorth(material);
-                worth.set(path + ".price", price);
-                worth.set(path + ".sellable", price > 0);
-                added++;
-            } else if (!worth.contains(path + ".sellable")) {
-                worth.set(path + ".sellable", worth.getDouble(path + ".price", 0) > 0);
+
+            double buyPrice;
+            if (worth.contains(path + ".buy-price")) {
+                buyPrice = worth.getDouble(path + ".buy-price");
+            } else if (worth.contains(path + ".price")) {
+                // One-time compatibility with older worth.yml files.
+                buyPrice = worth.getDouble(path + ".price");
+                worth.set(path + ".buy-price", roundMoney(Math.max(0.01, buyPrice)));
+                changed = true;
+            } else {
+                buyPrice = Math.max(0.01, defaultWorth(material));
+                worth.set(path + ".buy-price", roundMoney(buyPrice));
+                changed = true;
             }
+
+            if (!worth.contains(path + ".sell-price")) {
+                worth.set(path + ".sell-price", roundMoney(Math.max(0.0, buyPrice * defaultSellRate)));
+                changed = true;
+            }
+            if (!worth.contains(path + ".sellable")) {
+                worth.set(path + ".sellable", true);
+                changed = true;
+            }
+
+            if (changed) added++;
         }
-        if (added > 0 || removed || !worthFile.exists()) saveWorth();
-        getLogger().info("Worth catalogue ready; added " + added + " new materials.");
+
+        if (added > 0) {
+            saveWorth();
+            getLogger().info("Added " + added + " missing item entries to worth.yml. Existing prices were preserved.");
+        } else {
+            getLogger().info("Worth catalogue loaded. Existing worth.yml prices were preserved.");
+        }
+    }
+
+    private double lowValuePrice(Material material) {
+        return Math.max(0.05, baseWorth(material));
     }
 
     private double defaultWorth(Material material) {
+        return recipeWorth(material, new HashSet<>(), 0);
+    }
+
+    private double recipeWorth(Material material, Set<Material> visiting, int depth) {
+        if (material == null || material.isAir()) return 0.0;
+        Double cached = recipePriceCache.get(material);
+        if (cached != null) return cached;
+        double rawPrice = rawMaterialPrice(material);
+        if (depth >= 10 || !visiting.add(material)) return rawPrice;
+
+        double cheapestRecipe = Double.POSITIVE_INFINITY;
+        for (Recipe recipe : Bukkit.getRecipesFor(new ItemStack(material))) {
+            Map<Material, Integer> ingredients = new LinkedHashMap<>();
+            if (recipe instanceof ShapedRecipe shaped) {
+                Map<Character, ItemStack> choices = shaped.getIngredientMap();
+                for (String row : shaped.getShape()) {
+                    for (char symbol : row.toCharArray()) {
+                        ItemStack ingredient = choices.get(symbol);
+                        if (ingredient != null && !ingredient.getType().isAir()) {
+                            ingredients.merge(ingredient.getType(), 1, Integer::sum);
+                        }
+                    }
+                }
+            } else if (recipe instanceof ShapelessRecipe shapeless) {
+                for (ItemStack ingredient : shapeless.getIngredientList()) {
+                    if (ingredient != null && !ingredient.getType().isAir()) {
+                        ingredients.merge(ingredient.getType(), ingredient.getAmount(), Integer::sum);
+                    }
+                }
+            } else {
+                continue;
+            }
+
+            if (ingredients.isEmpty()) continue;
+            double ingredientCost = 0.0;
+            Set<Material> branch = new HashSet<>(visiting);
+            for (Map.Entry<Material, Integer> ingredient : ingredients.entrySet()) {
+                ingredientCost += recipeWorth(ingredient.getKey(), branch, depth + 1) * ingredient.getValue();
+            }
+            int outputAmount = Math.max(1, recipe.getResult().getAmount());
+            // A configurable shop premium covers convenience and discourages crafting-to-resell loops.
+            double premium = Math.max(0.0, getConfig().getDouble("economy.recipe-price-premium", 0.25));
+            double craftedPrice = ingredientCost / outputAmount * (1.0 + premium);
+            if (Double.isFinite(craftedPrice) && craftedPrice > 0.0) {
+                cheapestRecipe = Math.min(cheapestRecipe, craftedPrice);
+            }
+        }
+        visiting.remove(material);
+        double calculated = Double.isFinite(cheapestRecipe)
+                ? Math.max(0.05, Math.min(5000.0, cheapestRecipe)) : rawPrice;
+        recipePriceCache.put(material, calculated);
+        return calculated;
+    }
+
+    private double rawMaterialPrice(Material material) {
+        return Math.max(0.05, baseWorth(material));
+    }
+
+    /*
+     * Prices are in normal server-economy dollars, not multiplied by 1,000.
+     * Recipe-derived prices make crafted gear cost more than its raw ingredients.
+     */
+    private double baseWorth(Material material) {
         String n = material.name();
+        if (n.equals("DIAMOND") || n.endsWith("_DIAMOND_ORE")) return 120.0;
+        if (n.equals("EMERALD") || n.endsWith("_EMERALD_ORE")) return 80.0;
+        if (n.equals("DIAMOND_BLOCK")) return 1080.0;
+        if (n.equals("EMERALD_BLOCK")) return 720.0;
+        if (n.equals("ANCIENT_DEBRIS")) return 180.0;
+        if (n.equals("NETHERITE_INGOT")) return 500.0;
+        if (n.equals("RAW_IRON") || n.endsWith("_IRON_ORE")) return 8.0;
+        if (n.equals("IRON_INGOT")) return 12.0;
+        if (n.equals("RAW_GOLD") || n.endsWith("_GOLD_ORE")) return 10.0;
+        if (n.equals("GOLD_INGOT")) return 16.0;
+        if (n.equals("RAW_COPPER") || n.endsWith("_COPPER_ORE")) return 3.0;
+        if (n.equals("COPPER_INGOT")) return 5.0;
+        if (n.equals("COAL") || n.equals("CHARCOAL") || n.endsWith("_COAL_ORE")) return 3.0;
+        if (n.contains("REDSTONE")) return 2.5;
+        if (n.contains("LAPIS")) return 3.5;
+        if (n.contains("QUARTZ")) return 5.0;
+        if (n.contains("AMETHYST")) return 6.0;
+        if (n.equals("OBSIDIAN") || n.equals("CRYING_OBSIDIAN")) return 12.0;
+        if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_STEM") || n.endsWith("_HYPHAE")) return 3.0;
+        if (n.endsWith("_PLANKS")) return 0.8;
+        if (n.equals("DIRT") || n.equals("COARSE_DIRT") || n.equals("ROOTED_DIRT")) return 0.25;
+        if (n.equals("COBBLESTONE") || n.equals("GRAVEL") || n.equals("SAND") || n.equals("RED_SAND")) return 0.4;
+        if (n.equals("STONE") || n.equals("DEEPSLATE") || n.equals("TUFF")) return 0.6;
+        if (n.contains("GLASS")) return 0.8;
+        if (n.contains("WOOL")) return 2.0;
+        if (n.contains("CONCRETE")) return 1.5;
+        if (n.contains("TERRACOTTA")) return 1.5;
+        if (n.contains("BOOK")) return 4.0;
+        if (n.contains("POTION")) return 12.0;
+        if (n.equals("ENDER_PEARL")) return 12.0;
+        if (n.equals("BLAZE_ROD")) return 10.0;
+        if (n.equals("GHAST_TEAR")) return 18.0;
+        if (n.equals("SLIME_BALL")) return 5.0;
+        if (n.equals("GUNPOWDER")) return 3.0;
+        if (n.equals("LEATHER")) return 4.0;
+        if (n.equals("STRING")) return 1.5;
+        if (n.equals("WHEAT") || n.equals("CARROT") || n.equals("POTATO") || n.equals("BEETROOT")) return 1.0;
+        if (n.endsWith("_SEEDS")) return 0.35;
+        if (n.equals("SUGAR_CANE") || n.equals("BAMBOO") || n.equals("CACTUS")) return 0.75;
+        if (material.isEdible()) return 2.0;
+        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
+                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) return 8.0;
+        if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
+                || n.endsWith("_BOOTS")) return 10.0;
+        if (material.isBlock()) return 0.75;
+        return 1.5;
+    }
+
+    private double legacyGeneratedBuyPrice(Material material) {
+        String n = material.name();
+        double legacy;
         if (List.of("BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK", "REPEATING_COMMAND_BLOCK",
                 "STRUCTURE_BLOCK", "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK",
-                "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n)) return 0.0;
-        if (n.contains("NETHERITE")) return 0.0;
-        if (n.contains("ANCIENT_DEBRIS")) return 180.0;
-        if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) return n.endsWith("_BLOCK") ? 900.0 : 90.0;
-        if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) return n.endsWith("_BLOCK") ? 600.0 : 60.0;
-        if (n.contains("AMETHYST")) return 8.0;
-        if (n.contains("GOLD")) return n.endsWith("_INGOT") ? 14.0 : 3.0;
-        if (n.contains("IRON")) return n.endsWith("_INGOT") ? 8.0 : 2.0;
-        if (n.contains("COPPER")) return n.endsWith("_INGOT") ? 4.0 : 1.0;
-        if (n.contains("COAL")) return 3.0;
-        if (n.contains("REDSTONE")) return 2.5;
-        if (n.contains("LAPIS")) return 4.0;
-        if (n.contains("QUARTZ")) return 5.0;
-        if (n.contains("BOOK") || n.contains("ENCHANT")) return 12.0;
-        if (n.contains("TOTEM")) return 100.0;
-        if (n.contains("ELYTRA")) return 300.0;
-        if (n.contains("SHULKER")) return 45.0;
-        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
-                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) return 12.0;
-        if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
-                || n.endsWith("_BOOTS")) return 15.0;
-        if (material.isEdible()) return 2.0;
-        if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_PLANKS")) return 1.5;
-        if (n.contains("POTION")) return 8.0;
-        if (material.isBlock()) return 1.0;
-        return 1.0;
+                "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n) || n.contains("NETHERITE")) return 1001.0;
+        if (n.contains("ANCIENT_DEBRIS")) legacy = 180.0;
+        else if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) legacy = n.endsWith("_BLOCK") ? 900.0 : 90.0;
+        else if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) legacy = n.endsWith("_BLOCK") ? 600.0 : 60.0;
+        else if (n.contains("AMETHYST")) legacy = 8.0;
+        else if (n.contains("GOLD")) legacy = n.endsWith("_INGOT") ? 14.0 : 3.0;
+        else if (n.contains("IRON")) legacy = n.endsWith("_INGOT") ? 8.0 : 2.0;
+        else if (n.contains("COPPER")) legacy = n.endsWith("_INGOT") ? 4.0 : 1.0;
+        else if (n.contains("COAL")) legacy = 3.0;
+        else if (n.contains("REDSTONE")) legacy = 2.5;
+        else if (n.contains("LAPIS")) legacy = 4.0;
+        else if (n.contains("QUARTZ")) legacy = 5.0;
+        else if (n.contains("BOOK") || n.contains("ENCHANT")) legacy = 12.0;
+        else if (n.contains("TOTEM")) legacy = 100.0;
+        else if (n.contains("ELYTRA")) legacy = 300.0;
+        else if (n.contains("SHULKER")) legacy = 45.0;
+        else if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
+                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) legacy = 12.0;
+        else if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
+                || n.endsWith("_BOOTS")) legacy = 15.0;
+        else if (material.isEdible()) legacy = 2.0;
+        else if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_PLANKS")) legacy = 1.5;
+        else if (n.contains("POTION")) legacy = 8.0;
+        else if (material.isBlock()) legacy = 1.0;
+        else legacy = 1.0;
+        return legacy <= 5.0 ? (legacy <= 2.0 ? 40.0 : 60.0) : Math.max(1001.0, legacy * 1000.0);
+    }
+
+    private void migrateRecipeWorthPrices() {
+        if (getConfig().getBoolean("economy.recipe-pricing-migration-v2", false)) return;
+        double sellRate = Math.max(0.0, Math.min(1.0, getConfig().getDouble("economy.default-sell-rate", 0.5)));
+        int updated = 0;
+        for (Material material : Material.values()) {
+            if (!isShopCatalogueItem(material) || isRestrictedShopItem(material)) continue;
+            String path = "items." + material.name();
+            if (!worth.contains(path + ".buy-price")) continue;
+            double oldBuy = legacyGeneratedBuyPrice(material);
+            double configuredBuy = worth.getDouble(path + ".buy-price");
+            double legacyFilePrice = worth.getDouble(path + ".price", Double.NaN);
+            boolean generatedSellMatches = Math.abs(worth.getDouble(path + ".sell-price", -1.0)
+                    - roundMoney(configuredBuy * 0.5)) <= 0.01;
+            boolean looksLikeOldGeneratedTier = Math.abs(configuredBuy - 40.0) <= 0.01
+                    || Math.abs(configuredBuy - 60.0) <= 0.01 || configuredBuy >= 1001.0;
+            boolean untouchedGeneratedPrice = Math.abs(configuredBuy - oldBuy) <= 0.01
+                    || (looksLikeOldGeneratedTier && generatedSellMatches);
+            boolean untouchedLegacyPrice = Double.isFinite(legacyFilePrice)
+                    && (Math.abs(legacyFilePrice * 1000.0 - oldBuy) <= 0.01
+                    || (oldBuy == 40.0 && legacyFilePrice >= 0.0 && legacyFilePrice <= 2.0)
+                    || (oldBuy == 60.0 && legacyFilePrice > 2.0 && legacyFilePrice <= 5.0));
+            if (!untouchedGeneratedPrice && !untouchedLegacyPrice) continue; // Preserve owner-customised prices.
+
+            double newBuy = roundMoney(defaultWorth(material));
+            worth.set(path + ".buy-price", newBuy);
+            double configuredSell = worth.getDouble(path + ".sell-price", -1.0);
+            // Recognise untouched prices from the previous 50% sell-rate economy,
+            // as well as installations already using the new configured sell rate.
+            double previousDefaultSell = roundMoney(configuredBuy * 0.5);
+            double currentDefaultSell = roundMoney(configuredBuy * sellRate);
+            if (Math.abs(configuredSell - previousDefaultSell) <= 0.01
+                    || Math.abs(configuredSell - currentDefaultSell) <= 0.01) {
+                worth.set(path + ".sell-price", roundMoney(newBuy * sellRate));
+            }
+            if (untouchedLegacyPrice) worth.set(path + ".price", null);
+            updated++;
+        }
+        getConfig().set("economy.recipe-pricing-migration-v2", true);
+        saveConfig();
+        saveWorth();
+        getLogger().info("Recipe-based economy pricing updated " + updated
+                + " untouched generated entries. Custom worth.yml prices were preserved.");
     }
 
     private void saveWorth() {
@@ -277,11 +645,19 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         saveBalances();
     }
 
+    public String getBalancePlaceholder(UUID uuid) {
+        return money(balance(uuid));
+    }
+
+    public double getBalance(UUID uuid) { return balance(uuid); }
+
+    public void setBalance(UUID uuid, double amount) { setBalanceInternal(uuid, amount); }
+
     private double balance(UUID uuid) {
         return balances.getOrDefault(uuid, 0.0);
     }
 
-    private void setBalance(UUID uuid, double amount) {
+    private void setBalanceInternal(UUID uuid, double amount) {
         balances.put(uuid, roundMoney(Math.max(0, amount)));
         saveBalances();
     }
@@ -322,44 +698,46 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private boolean isRestrictedShopItem(Material material) {
         String n = material.name();
         if (n.contains("NETHERITE")) return true;
-        return n.equals("ELYTRA") || n.equals("DRAGON_EGG") || n.equals("DRAGON_HEAD")
-                || n.equals("DRAGON_WALL_HEAD") || n.equals("NETHER_STAR") || n.equals("BEACON")
-                || n.equals("TOTEM_OF_UNDYING") || n.equals("SHULKER_SHELL") || n.startsWith("SHULKER_BOX")
-                || n.equals("END_CRYSTAL") || n.equals("SPAWNER") || n.equals("ENCHANTED_GOLDEN_APPLE")
-                || n.equals("TRIDENT") || n.equals("MACE") || n.equals("WITHER_SKELETON_SKULL")
-                || n.equals("WITHER_SKELETON_WALL_SKULL");
+        if (n.endsWith("_SPAWN_EGG")) return true;
+        return List.of(
+                "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
+                "REPEATING_COMMAND_BLOCK", "COMMAND_BLOCK_MINECART", "STRUCTURE_BLOCK",
+                "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK", "LIGHT",
+                "END_PORTAL_FRAME", "END_GATEWAY", "SPAWNER", "BUDDING_AMETHYST",
+                "REINFORCED_DEEPSLATE", "DRAGON_EGG", "DRAGON_HEAD", "DRAGON_WALL_HEAD",
+                "ELYTRA", "NETHER_STAR", "BEACON", "TOTEM_OF_UNDYING", "SHULKER_SHELL",
+                "END_CRYSTAL", "ENCHANTED_GOLDEN_APPLE", "TRIDENT", "MACE",
+                "WITHER_SKELETON_SKULL", "WITHER_SKELETON_WALL_SKULL"
+        ).contains(n) || n.startsWith("SHULKER_BOX");
     }
 
     private boolean isShopCatalogueItem(Material material) {
-        if (material == null || !material.isItem() || material.isAir() || isRestrictedShopItem(material)) return false;
-        if (material.isBlock()) return true;
-
-        // Keep useful resources, farming supplies and food. Gear, weapons, armour,
-        // potions and novelty items are intentionally not part of this shop.
-        return List.of(
-                "DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
-                "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
-                "REDSTONE", "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD",
-                "WHEAT", "WHEAT_SEEDS", "CARROT", "POTATO", "BEETROOT",
-                "BEETROOT_SEEDS", "MELON_SLICE", "MELON_SEEDS", "PUMPKIN_SEEDS",
-                "SUGAR_CANE", "BAMBOO", "COCOA_BEANS",
-                "APPLE", "BREAD", "COOKED_BEEF", "COOKED_PORKCHOP",
-                "COOKED_CHICKEN", "COOKED_MUTTON", "COOKED_RABBIT",
-                "BAKED_POTATO", "GOLDEN_CARROT"
-        ).contains(material.name());
+        // Include the complete obtainable survival item catalogue: blocks, resources,
+        // food, farming, brewing, tools, weapons, armour and utility items.
+        return material != null && material.isItem() && !material.isAir()
+                && !isRestrictedShopItem(material);
     }
 
-    private double worth(Material material) {
+    private double buyPrice(Material material) {
         if (isRestrictedShopItem(material)) return 0;
         String path = "items." + material.name();
         if (!worth.getBoolean(path + ".sellable", false)) return 0;
-        double basePrice = Math.max(0, worth.getDouble(path + ".price", 0));
-        double multiplier = Math.max(0, getConfig().getDouble("economy.price-multiplier", 3.0));
-        return roundMoney(basePrice * multiplier);
+        return roundMoney(Math.max(0, worth.getDouble(path + ".buy-price", 0)));
+    }
+
+    private double sellPrice(Material material) {
+        if (isRestrictedShopItem(material)) return 0;
+        String path = "items." + material.name();
+        if (!worth.getBoolean(path + ".sellable", false)) return 0;
+        return roundMoney(Math.max(0, worth.getDouble(path + ".sell-price", 0)));
+    }
+
+    private double worth(Material material) {
+        return sellPrice(material);
     }
 
     private boolean isSellable(ItemStack item) {
-        return item != null && !item.getType().isAir() && worth(item.getType()) > 0;
+        return item != null && !item.getType().isAir() && sellPrice(item.getType()) > 0;
     }
 
     private ShopCategory categoryFor(Material material) {
@@ -407,11 +785,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
         lore.removeIf(line -> {
             String stripped = ChatColor.stripColor(line);
-            return stripped != null && stripped.startsWith("Worth: ");
+            return stripped != null && (stripped.startsWith("Worth: ")
+                    || stripped.startsWith("Buy: ") || stripped.startsWith("Sell: "));
         });
-        double value = worth(stack.getType());
-        if (value > 0) {
-            String worthLine = color("&7Worth: &a" + money(value) + " &8each");
+        double buyValue = buyPrice(stack.getType());
+        double sellValue = sellPrice(stack.getType());
+        if (buyValue > 0 || sellValue > 0) {
+            String worthLine = color("&7Buy: &e" + money(buyValue) + " &8| &7Sell: &a" + money(sellValue) + " &8each");
             if (lore.contains(worthLine)) return;
             lore.add(worthLine);
             meta.setLore(lore);
@@ -449,7 +829,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
             if (!isShopCatalogueItem(material) || categoryFor(material) != category) continue;
-            if (worth(material) <= 0) continue;
+            if (buyPrice(material) <= 0) continue;
             items.add(material);
         }
         items.sort(Comparator.comparing(Material::name));
@@ -470,6 +850,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             ItemMeta meta = stack.getItemMeta();
             if (meta != null) {
                 List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+                lore.add(color("&7Buy: &e" + money(buyPrice(material)) + " &8each"));
+                lore.add(color("&7Sell: &a" + money(sellPrice(material)) + " &8each"));
                 lore.add(color("&eClick to buy 1"));
                 lore.add(color("&7Shift-click to buy a stack"));
                 meta.setLore(lore);
@@ -495,7 +877,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void buy(Player player, Material material, int amount) {
-        double unitPrice = worth(material);
+        double unitPrice = buyPrice(material);
         if (unitPrice <= 0) {
             msg(player, "&cThis item is not currently available.");
             return;
@@ -537,7 +919,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         for (int slot = 0; slot < 45; slot++) {
             ItemStack item = inventory.getItem(slot);
             if (item == null || item.getType().isAir()) continue;
-            double unit = worth(item.getType());
+            double unit = sellPrice(item.getType());
             if (unit <= 0 || !worth.getBoolean("items." + item.getType().name() + ".sellable", false)) continue;
             total += unit * item.getAmount() * multiplier;
             soldStacks++;
@@ -579,15 +961,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public void onJoin(PlayerJoinEvent event) {
         Player joining = event.getPlayer();
         remember(joining);
+        startDailyTracking(joining);
         if (!joining.hasPlayedBefore() && !playerData.getBoolean("rtp.first-join-complete." + joining.getUniqueId(), false)) {
             Bukkit.getScheduler().runTask(this, () -> {
-                if (joining.isOnline() && randomTeleport(joining)) {
-                    playerData.set("rtp.first-join-complete." + joining.getUniqueId(), true);
-                    saveBalances();
-                    msg(joining, "&aWelcome! You have been randomly teleported to a new location.");
-                } else if (joining.isOnline()) {
-                    msg(joining, "&cCould not find a safe random location. Use /rtp to try again.");
-                }
+                if (!joining.isOnline()) return;
+                startTeleportCountdown(joining, "a random location", () -> {
+                    boolean success = randomTeleport(joining);
+                    if (success) {
+                        playerData.set("rtp.first-join-complete." + joining.getUniqueId(), true);
+                        saveBalances();
+                    }
+                    return success;
+                });
             });
         }
         for (UUID vanishedId : vanishedPlayers) {
@@ -602,8 +987,340 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
     }
 
+    private String dailyPath(UUID uuid) {
+        return "daily.players." + uuid;
+    }
+
+    private void ensureDailyProgress(UUID uuid) {
+        String path = dailyPath(uuid);
+        String today = LocalDate.now().toString();
+        if (!today.equals(playerData.getString(path + ".progress-date", ""))) {
+            playerData.set(path + ".progress-date", today);
+            playerData.set(path + ".play-seconds", 0);
+        }
+    }
+
+    private int dailyStreak(UUID uuid) {
+        String lastClaim = playerData.getString(dailyPath(uuid) + ".last-claim", "");
+        if (lastClaim.isBlank()) return 0;
+        try {
+            LocalDate last = LocalDate.parse(lastClaim);
+            LocalDate today = LocalDate.now();
+            if (last.isBefore(today.minusDays(1))) return 0;
+            return Math.max(0, playerData.getInt(dailyPath(uuid) + ".streak", 0));
+        } catch (RuntimeException exception) {
+            return 0;
+        }
+    }
+
+    private int dailyPlaySeconds(UUID uuid) {
+        ensureDailyProgress(uuid);
+        return Math.max(0, playerData.getInt(dailyPath(uuid) + ".play-seconds", 0));
+    }
+
+    private int dailyRequiredSeconds(UUID uuid) {
+        int nextDay = dailyStreak(uuid) + 1;
+        int base = Math.max(1, getConfig().getInt("daily.base-play-minutes", 10));
+        int increase = Math.max(0, getConfig().getInt("daily.extra-minutes-per-streak-day", 5));
+        int maximum = Math.max(base, getConfig().getInt("daily.maximum-play-minutes", 120));
+        return Math.min(maximum, base + (nextDay - 1) * increase) * 60;
+    }
+
+    private List<Map<?, ?>> dailyRewards() {
+        List<Map<?, ?>> safe = new ArrayList<>();
+        for (Map<?, ?> configured : getConfig().getMapList("daily.rewards")) {
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(configured, "material", "")));
+            if (material == null || !isAllowedDailyMaterial(material)) continue;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(configured, "amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            amount = Math.max(1, Math.min(dailyMaximumAmount(material), amount));
+            Map<String, Object> reward = new LinkedHashMap<>();
+            reward.put("material", material.name());
+            reward.put("amount", amount);
+            reward.put("name", String.valueOf(dailyRewardValue(configured, "name", material.name().replace('_', ' '))));
+            safe.add(reward);
+        }
+        return safe;
+    }
+
+    private boolean isAllowedDailyMaterial(Material material) {
+        return switch (material) {
+            case BREAD, COAL, COBBLESTONE, OAK_LOG, COOKED_BEEF, IRON_NUGGET,
+                    TORCH, ARROW, STRING, LEATHER, IRON_INGOT, GOLD_INGOT,
+                    LAPIS_LAZULI, REDSTONE, EXPERIENCE_BOTTLE, ENDER_PEARL,
+                    OBSIDIAN, EMERALD, DIAMOND, GOLDEN_APPLE, NAME_TAG, SADDLE,
+                    BOOKSHELF, IRON_PICKAXE, SHIELD, BOW, WATER_BUCKET,
+                    COPPER_INGOT, PRISMARINE_SHARD, GLOWSTONE_DUST -> true;
+            default -> false;
+        };
+    }
+
+    private int dailyMaximumAmount(Material material) {
+        return switch (material) {
+            case BREAD, COAL, TORCH, ARROW, IRON_NUGGET, LAPIS_LAZULI,
+                    REDSTONE, COBBLESTONE -> 16;
+            case OAK_LOG, COOKED_BEEF, STRING, LEATHER, OBSIDIAN,
+                    BOOKSHELF, COPPER_INGOT, PRISMARINE_SHARD, GLOWSTONE_DUST -> 8;
+            case IRON_INGOT, GOLD_INGOT, EXPERIENCE_BOTTLE -> 4;
+            case ENDER_PEARL, EMERALD, DIAMOND, GOLDEN_APPLE, NAME_TAG,
+                    SADDLE, IRON_PICKAXE, SHIELD, BOW, WATER_BUCKET -> 1;
+            default -> 1;
+        };
+    }
+
+    /*
+     * Every player gets their own shuffled copy of the configured reward pool.
+     * The calendar is persisted in players.yml, so reopening the menu, relogging,
+     * or restarting the server never rerolls a player's rewards.
+     */
+    private List<Map<?, ?>> dailyCalendar(UUID uuid) {
+        List<Map<?, ?>> pool = dailyRewards();
+        if (pool.isEmpty()) return pool;
+
+        String path = dailyPath(uuid);
+        int cycle = dailyStreak(uuid) / pool.size();
+        List<Map<?, ?>> saved = playerData.getMapList(path + ".calendar");
+        if (playerData.getInt(path + ".calendar-cycle", -1) == cycle && saved.size() == pool.size()) {
+            return saved;
+        }
+
+        List<Map<?, ?>> shuffled = new ArrayList<>(pool);
+        Collections.shuffle(shuffled);
+        playerData.set(path + ".calendar", shuffled);
+        playerData.set(path + ".calendar-cycle", cycle);
+        saveDailyData();
+        return shuffled;
+    }
+
+    private Object dailyRewardValue(Map<?, ?> reward, String key, Object fallback) {
+        Object value = reward.get(key);
+        return value == null ? fallback : value;
+    }
+
+    private void startDailyTracking(Player player) {
+        UUID uuid = player.getUniqueId();
+        ensureDailyProgress(uuid);
+        if (dailyTasks.containsKey(uuid)) return;
+        BukkitTask task = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline()) {
+                stopDailyTracking(uuid);
+                return;
+            }
+            // AFK farming does not count toward the daily active-play requirement.
+            if (afkPlayers.containsKey(uuid)) return;
+            int seconds = dailyPlaySeconds(uuid) + 1;
+            playerData.set(dailyPath(uuid) + ".play-seconds", seconds);
+            int unsaved = dailyUnsavedSeconds.getOrDefault(uuid, 0) + 1;
+            if (unsaved >= 60) {
+                saveDailyData();
+                unsaved = 0;
+            }
+            dailyUnsavedSeconds.put(uuid, unsaved);
+        }, 20L, 20L);
+        dailyTasks.put(uuid, task);
+    }
+
+    private void stopDailyTracking(UUID uuid) {
+        BukkitTask task = dailyTasks.remove(uuid);
+        if (task != null) task.cancel();
+        dailyUnsavedSeconds.remove(uuid);
+        saveDailyData();
+    }
+
+    private void saveDailyData() {
+        try {
+            playerData.save(playersFile);
+        } catch (IOException exception) {
+            getLogger().severe("Could not save daily reward progress: " + exception.getMessage());
+        }
+    }
+
+    private void openDailyEditor(Player player) {
+        List<Map<?, ?>> rewards = dailyRewards();
+        MenuHolder holder = new MenuHolder(MenuType.DAILY_EDIT, null, 0);
+        Inventory inventory = Bukkit.createInventory(holder, 54, color("&8Daily Reward Editor"));
+        holder.inventory = inventory;
+        for (int i = 0; i < rewards.size() && i < 45; i++) {
+            Map<?, ?> reward = rewards.get(i);
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "BREAD")));
+            if (material == null || material.isAir()) material = Material.BREAD;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            String name = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
+            inventory.setItem(i, icon(material, "&ePool reward #" + (i + 1), List.of(
+                    "&7Item: &f" + name,
+                    "&7Amount: &f" + amount,
+                    "&eLeft-click: change amount",
+                    "&eRight-click: change item",
+                    "&8Changes apply to newly generated calendars."
+            )));
+        }
+        inventory.setItem(49, icon(Material.BOOK, "&6Daily Reward Pool", List.of(
+                "&7Players receive their own shuffled calendar.",
+                "&7Existing calendars are not rerolled when edited.",
+                "&7Only the balanced item whitelist is available."
+        )));
+        inventory.setItem(53, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
+        player.openInventory(inventory);
+    }
+
+    private void editDailyReward(Player player, int index, boolean changeMaterial) {
+        List<Map<?, ?>> current = dailyRewards();
+        if (index < 0 || index >= current.size()) return;
+        List<Map<String, Object>> updated = new ArrayList<>();
+        for (Map<?, ?> entry : current) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> value : entry.entrySet()) {
+                copy.put(String.valueOf(value.getKey()), value.getValue());
+            }
+            updated.add(copy);
+        }
+
+        Map<String, Object> reward = updated.get(index);
+        Material[] allowed = {
+                Material.BREAD, Material.COAL, Material.COBBLESTONE, Material.OAK_LOG,
+                Material.COOKED_BEEF, Material.IRON_NUGGET, Material.TORCH, Material.ARROW,
+                Material.STRING, Material.LEATHER, Material.IRON_INGOT, Material.GOLD_INGOT,
+                Material.LAPIS_LAZULI, Material.REDSTONE, Material.EXPERIENCE_BOTTLE,
+                Material.ENDER_PEARL, Material.OBSIDIAN, Material.EMERALD, Material.DIAMOND,
+                Material.GOLDEN_APPLE, Material.NAME_TAG, Material.SADDLE, Material.BOOKSHELF,
+                Material.IRON_PICKAXE, Material.SHIELD, Material.BOW, Material.WATER_BUCKET,
+                Material.COPPER_INGOT, Material.PRISMARINE_SHARD, Material.GLOWSTONE_DUST
+        };
+        if (changeMaterial) {
+            Material old = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "BREAD")));
+            int position = 0;
+            for (int i = 0; i < allowed.length; i++) if (allowed[i] == old) { position = i; break; }
+            Material next = allowed[(position + 1) % allowed.length];
+            reward.put("material", next.name());
+            reward.put("name", next.name().replace('_', ' ').toLowerCase(Locale.ROOT));
+        } else {
+            Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "BREAD")));
+            if (material == null || material.isAir()) material = Material.BREAD;
+            int[] amounts = {1, 2, 4, 8, 16, 32};
+            int old;
+            try { old = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+            catch (NumberFormatException exception) { old = 1; }
+            int next = amounts[0];
+            for (int i = 0; i < amounts.length; i++) {
+                if (amounts[i] == old) { next = amounts[(i + 1) % amounts.length]; break; }
+                if (amounts[i] < old) next = amounts[i];
+            }
+            reward.put("amount", Math.min(material.getMaxStackSize(), next));
+        }
+        getConfig().set("daily.rewards", updated);
+        saveConfig();
+        openDailyEditor(player);
+    }
+
+    private void openDaily(Player player) {
+        List<Map<?, ?>> rewards = dailyCalendar(player.getUniqueId());
+        if (rewards.isEmpty()) {
+            msg(player, "&cDaily rewards are not configured.");
+            return;
+        }
+        MenuHolder holder = new MenuHolder(MenuType.DAILY, null, 0);
+        Inventory inventory = Bukkit.createInventory(holder, 54, color("&8Daily Rewards"));
+        holder.inventory = inventory;
+        int streak = dailyStreak(player.getUniqueId());
+        String today = LocalDate.now().toString();
+        boolean claimed = today.equals(playerData.getString(dailyPath(player.getUniqueId()) + ".last-claim", ""));
+        int rewardIndex = claimed ? Math.max(0, Math.min(streak - 1, rewards.size() - 1)) : Math.min(streak, rewards.size() - 1);
+        int required = dailyRequiredSeconds(player.getUniqueId());
+        int played = dailyPlaySeconds(player.getUniqueId());
+
+        for (int i = 0; i < rewards.size() && i < 45; i++) {
+            Map<?, ?> reward = rewards.get(i);
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "CHEST")));
+            if (material == null || material.isAir()) material = Material.CHEST;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
+            int displayDay = i + 1;
+            String rewardName = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
+            List<String> lore = new ArrayList<>();
+            lore.add("&7Personalised reward");
+            lore.add("&7Reward: &f" + rewardName + " x" + amount);
+            if (i == rewardIndex) lore.add(claimed ? "&aClaimed today" : "&eYour next reward");
+            else if (claimed && i == Math.min(streak, rewards.size() - 1)) lore.add("&eTomorrow's reward");
+            else if (i < rewardIndex) lore.add("&aPrevious streak reward");
+            else lore.add("&8Upcoming reward");
+            ItemStack icon = icon(material, (i == rewardIndex ? "&e" : "&f") + "Day " + displayDay, lore);
+            inventory.setItem(i, icon);
+        }
+
+        int remaining = Math.max(0, required - played);
+        inventory.setItem(49, icon(Material.CLOCK, "&6Daily Progress", List.of(
+                "&7Streak: &f" + streak + " day(s)",
+                "&7Played today: &f" + played / 60 + "m " + played % 60 + "s",
+                "&7Required: &f" + required / 60 + " minute(s)",
+                "&7Remaining: &e" + remaining / 60 + "m " + remaining % 60 + "s",
+                claimed ? "&aToday's reward has been claimed." : "&ePlay to unlock your reward."
+        )));
+        inventory.setItem(50, icon(claimed ? Material.MINECART : (played >= required ? Material.EMERALD : Material.BARRIER),
+                claimed ? "&aAlready Claimed" : "&eClaim Daily Reward",
+                List.of(claimed ? "&7Come back tomorrow." : played >= required
+                        ? "&aClick to collect your reward." : "&cYou have not played long enough yet.")));
+        inventory.setItem(53, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
+        player.openInventory(inventory);
+    }
+
+    private void claimDaily(Player player) {
+        UUID uuid = player.getUniqueId();
+        String today = LocalDate.now().toString();
+        String path = dailyPath(uuid);
+        if (today.equals(playerData.getString(path + ".last-claim", ""))) {
+            msg(player, "&eYou have already claimed today's reward.");
+            return;
+        }
+        int required = dailyRequiredSeconds(uuid);
+        int played = dailyPlaySeconds(uuid);
+        if (played < required) {
+            int remaining = required - played;
+            msg(player, "&cPlay for another " + remaining / 60 + "m " + remaining % 60 + "s to unlock your daily reward.");
+            return;
+        }
+        List<Map<?, ?>> rewards = dailyCalendar(uuid);
+        if (rewards.isEmpty()) {
+            msg(player, "&cDaily rewards are not configured.");
+            return;
+        }
+        int streak = dailyStreak(uuid);
+        int rewardIndex = Math.min(streak, rewards.size() - 1);
+        Map<?, ?> reward = rewards.get(rewardIndex);
+        Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "")));
+        if (material == null || material.isAir()) {
+            msg(player, "&cThe configured daily reward is invalid. Please contact an administrator.");
+            return;
+        }
+        int amount;
+        try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
+        catch (NumberFormatException exception) { amount = 1; }
+        amount = Math.max(1, Math.min(material.getMaxStackSize(), amount));
+        ItemStack prize = new ItemStack(material, amount);
+        Map<Integer, ItemStack> overflow = player.getInventory().addItem(prize);
+        for (ItemStack extra : overflow.values()) player.getWorld().dropItemNaturally(player.getLocation(), extra);
+        int newStreak = streak + 1;
+        playerData.set(path + ".streak", newStreak);
+        playerData.set(path + ".last-claim", today);
+        saveDailyData();
+        String rewardName = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
+        msg(player, "&aDaily reward claimed: &e" + rewardName + " x" + amount + "&a. Streak: &e" + newStreak + " day(s)&a.");
+        player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.2f);
+        player.closeInventory();
+    }
+
     private void applyMaintenanceMotd() {
-        Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
+        if (motdManager != null) motdManager.applyCurrent();
+        else Bukkit.setMotd(maintenanceEnabled ? color("&6Server under maintenance") : originalMotd);
+    }
+
+    @EventHandler
+    public void onDailyQuit(PlayerQuitEvent event) {
+        stopDailyTracking(event.getPlayer().getUniqueId());
     }
 
     @EventHandler
@@ -618,6 +1335,134 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     @EventHandler
     public void onMaintenancePing(ServerListPingEvent event) {
         if (maintenanceEnabled) event.setMotd(color("&6Server under maintenance"));
+    }
+
+    private void startTeleportCountdown(Player player, String destination, BooleanSupplier teleportAction) {
+        final int[] seconds = {3};
+        final BukkitTask[] task = new BukkitTask[1];
+        task[0] = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline()) { task[0].cancel(); return; }
+            if (seconds[0] > 0) {
+                String number = String.valueOf(seconds[0]);
+                msg(player, "&eTeleporting to &f" + destination + " &ein &6" + number + "&e...");
+                player.sendTitle(color("&6Teleporting"), color("&e" + number), 0, 20, 0);
+                seconds[0]--;
+                return;
+            }
+            task[0].cancel();
+            if (teleportAction.getAsBoolean()) {
+                msg(player, "&aTeleported to &f" + destination + "&a.");
+                player.sendTitle(color("&aTeleported!"), color("&f" + destination), 0, 35, 10);
+            } else {
+                msg(player, "&cTeleport failed. No safe destination was found.");
+                player.sendTitle(color("&cTeleport failed"), color("&7Try again."), 0, 35, 10);
+            }
+        }, 0L, 20L);
+    }
+
+    private void showCoordinatesWhileBlind(Player player) {
+        int duration = Math.max(20, getConfig().getInt("rtp.blindness-duration-ticks", 100));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, duration, 0, false, false, false));
+        final BukkitTask[] task = new BukkitTask[1];
+        task[0] = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!player.isOnline() || !player.hasPotionEffect(PotionEffectType.BLINDNESS)) {
+                task[0].cancel();
+                return;
+            }
+            Location location = player.getLocation();
+            player.sendActionBar(Component.text(color("&eX: &f" + location.getBlockX()
+                    + " &eY: &f" + location.getBlockY() + " &eZ: &f" + location.getBlockZ())));
+        }, 0L, 5L);
+    }
+
+    private void loadHomes() {
+        if (economyDatabase == null) return;
+        try {
+            // Import legacy YAML homes without overwriting any homes already in SQLite.
+            ConfigurationSection allHomes = playerData.getConfigurationSection("homes");
+            if (allHomes != null) {
+                try (PreparedStatement insert = economyDatabase.prepareStatement(
+                        "INSERT OR IGNORE INTO homes (uuid, name, world, x, y, z, yaw, pitch) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    for (String uuidText : allHomes.getKeys(false)) {
+                        UUID uuid;
+                        try { uuid = UUID.fromString(uuidText); }
+                        catch (IllegalArgumentException ignored) { continue; }
+                        ConfigurationSection playerHomes = allHomes.getConfigurationSection(uuidText);
+                        if (playerHomes == null) continue;
+                        for (String homeName : playerHomes.getKeys(false)) {
+                            String path = "homes." + uuidText + "." + homeName;
+                            String worldName = playerData.getString(path + ".world");
+                            if (worldName == null || worldName.isBlank()) continue;
+                            insert.setString(1, uuid.toString());
+                            insert.setString(2, homeName.toLowerCase(Locale.ROOT));
+                            insert.setString(3, worldName);
+                            insert.setDouble(4, playerData.getDouble(path + ".x"));
+                            insert.setDouble(5, playerData.getDouble(path + ".y"));
+                            insert.setDouble(6, playerData.getDouble(path + ".z"));
+                            insert.setFloat(7, (float) playerData.getDouble(path + ".yaw"));
+                            insert.setFloat(8, (float) playerData.getDouble(path + ".pitch"));
+                            insert.addBatch();
+                        }
+                    }
+                    insert.executeBatch();
+                }
+            }
+            try (Statement statement = economyDatabase.createStatement();
+                 ResultSet result = statement.executeQuery("SELECT uuid, name, world, x, y, z, yaw, pitch FROM homes")) {
+                while (result.next()) {
+                    try {
+                        UUID uuid = UUID.fromString(result.getString("uuid"));
+                        World world = Bukkit.getWorld(result.getString("world"));
+                        if (world == null) continue;
+                        Location location = new Location(world, result.getDouble("x"), result.getDouble("y"),
+                                result.getDouble("z"), result.getFloat("yaw"), result.getFloat("pitch"));
+                        homes.computeIfAbsent(uuid, ignored -> new LinkedHashMap<>())
+                                .put(result.getString("name").toLowerCase(Locale.ROOT), location);
+                    } catch (IllegalArgumentException ignored) {
+                        getLogger().warning("Skipping a home with an invalid player UUID in economy.db.");
+                    }
+                }
+            }
+            getLogger().info("Loaded " + homes.values().stream().mapToInt(Map::size).sum() + " homes from economy.db.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not load homes from economy.db: " + exception.getMessage());
+        }
+    }
+
+    private void setHome(Player player, String name) {
+        String homeName = name.toLowerCase(Locale.ROOT);
+        Location location = player.getLocation();
+        try (PreparedStatement statement = economyDatabase.prepareStatement(
+                "INSERT INTO homes (uuid, name, world, x, y, z, yaw, pitch) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                        + "ON CONFLICT(uuid, name) DO UPDATE SET world=excluded.world, x=excluded.x, y=excluded.y, "
+                        + "z=excluded.z, yaw=excluded.yaw, pitch=excluded.pitch")) {
+            statement.setString(1, player.getUniqueId().toString());
+            statement.setString(2, homeName);
+            statement.setString(3, location.getWorld().getName());
+            statement.setDouble(4, location.getX());
+            statement.setDouble(5, location.getY());
+            statement.setDouble(6, location.getZ());
+            statement.setFloat(7, location.getYaw());
+            statement.setFloat(8, location.getPitch());
+            statement.executeUpdate();
+            homes.computeIfAbsent(player.getUniqueId(), ignored -> new LinkedHashMap<>())
+                    .put(homeName, location.clone());
+            msg(player, "&aHome &f" + homeName + " &asaved to the database.");
+        } catch (SQLException exception) {
+            getLogger().severe("Could not save home for " + player.getName() + ": " + exception.getMessage());
+            msg(player, "&cCould not save that home. Check the server console.");
+        }
+    }
+
+    private Location getHome(Player player, String name) {
+        Map<String, Location> playerHomes = homes.get(player.getUniqueId());
+        if (playerHomes == null) return null;
+        Location location = playerHomes.get(name.toLowerCase(Locale.ROOT));
+        return location == null ? null : location.clone();
+    }
+
+    private boolean validHomeName(String name) {
+        return name != null && name.matches("[A-Za-z0-9_-]{1,16}");
     }
 
     private boolean randomTeleport(Player player) {
@@ -657,7 +1502,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
             Location destination = new Location(world, x + 0.5, y, z + 0.5,
                     random.nextFloat() * 360.0f, 0.0f);
-            if (player.teleport(destination)) return true;
+            if (player.teleport(destination)) {
+                showCoordinatesWhileBlind(player);
+                return true;
+            }
         }
         return false;
     }
@@ -722,6 +1570,86 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     @EventHandler
+    public void onAfkMove(PlayerMoveEvent event) {
+        AfkSession session = afkPlayers.get(event.getPlayer().getUniqueId());
+        if (session == null || event.getTo() == null) return;
+
+        Location from = event.getFrom();
+        Location to = event.getTo();
+        if (from.getWorld() == to.getWorld()
+                && from.getX() == to.getX()
+                && from.getY() == to.getY()
+                && from.getZ() == to.getZ()) return;
+
+        // Freeze position while still allowing the player to look around.
+        event.setTo(new Location(from.getWorld(), from.getX(), from.getY(), from.getZ(),
+                to.getYaw(), to.getPitch()));
+    }
+
+    @EventHandler
+    public void onAfkChat(AsyncChatEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        if (!afkPlayers.containsKey(uuid)) return;
+        Bukkit.getScheduler().runTask(this, () -> stopAfk(uuid, true, true));
+    }
+
+    @EventHandler
+    public void onAfkQuit(PlayerQuitEvent event) {
+        stopAfk(event.getPlayer().getUniqueId(), false, false);
+    }
+
+    private void toggleAfk(Player player) {
+        UUID uuid = player.getUniqueId();
+        if (afkPlayers.containsKey(uuid)) {
+            stopAfk(uuid, true, true);
+            return;
+        }
+
+        BossBar bar = Bukkit.createBossBar("", BarColor.GREEN, BarStyle.SOLID);
+        bar.setVisible(true);
+        bar.addPlayer(player);
+        AfkSession[] holder = new AfkSession[1];
+        BukkitTask task = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            AfkSession session = holder[0];
+            if (session == null || !player.isOnline()) {
+                stopAfk(uuid, false, false);
+                return;
+            }
+
+            session.secondsRemaining--;
+            if (session.secondsRemaining <= 0) {
+                setBalance(uuid, balance(uuid) + 1000.0);
+                msg(player, "&aAFK reward received: &e$1,000&a.");
+                session.secondsRemaining = 60;
+            }
+            updateAfkBossBar(session);
+        }, 20L, 20L);
+
+        AfkSession session = new AfkSession(bar, task);
+        holder[0] = session;
+        afkPlayers.put(uuid, session);
+        updateAfkBossBar(session);
+        msg(player, "&aAFK mode enabled. Stay still to earn &e$1,000 &aper minute.");
+    }
+
+    private void updateAfkBossBar(AfkSession session) {
+        session.bossBar.setTitle(color("&aAFK Reward: &e$1,000 &7in &f" + session.secondsRemaining + "s"));
+        session.bossBar.setProgress(Math.max(0.0, Math.min(1.0, session.secondsRemaining / 60.0)));
+    }
+
+    private void stopAfk(UUID uuid, boolean notify, boolean onlineOnly) {
+        AfkSession session = afkPlayers.remove(uuid);
+        if (session == null) return;
+        session.task.cancel();
+        session.bossBar.removeAll();
+        session.bossBar.setVisible(false);
+        Player player = Bukkit.getPlayer(uuid);
+        if (notify && player != null && (!onlineOnly || player.isOnline())) {
+            msg(player, "&eAFK mode disabled. You did not receive a partial-minute reward.");
+        }
+    }
+
+    @EventHandler
     public void onAntiCheatMove(PlayerMoveEvent event) {
         if (!getConfig().getBoolean("anti-cheat.check-movement", false)) return;
         Player player = event.getPlayer();
@@ -773,6 +1701,20 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             ShopCategory[] categories = ShopCategory.values();
             int index = categorySlotIndex(raw);
             if (index >= 0 && index < categories.length) openShopItems(player, categories[index], 0);
+            return;
+        }
+
+        if (holder.type == MenuType.DAILY) {
+            event.setCancelled(true);
+            if (raw == 50) claimDaily(player);
+            else if (raw == 53) player.closeInventory();
+            return;
+        }
+
+        if (holder.type == MenuType.DAILY_EDIT) {
+            event.setCancelled(true);
+            if (raw == 53) player.closeInventory();
+            else if (raw >= 0 && raw < 45) editDailyReward(player, raw, event.isRightClick());
             return;
         }
 
@@ -840,6 +1782,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!(event.getWhoClicked() instanceof Player player)) return;
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof MenuHolder holder)) return;
+        if (holder.type == MenuType.DAILY) {
+            event.setCancelled(true);
+            return;
+        }
         if (holder.type == MenuType.SELL) {
             for (int raw : event.getRawSlots()) {
                 if (raw >= 45 && raw < top.getSize()) {
@@ -877,12 +1823,105 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 openCategories(player);
                 return true;
             }
+            case "ec" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open an ender chest."); return true; }
+                if (!player.hasPermission("jsmp.enderchest")) { msg(player, "&cYou do not have permission."); return true; }
+                if (args.length != 0) { msg(player, "&cUsage: /ec"); return true; }
+                player.openInventory(player.getEnderChest());
+                return true;
+            }
+            case "invsee", "ecsee" -> {
+                if (!(sender instanceof Player viewer)) { msg(sender, "&cOnly players can inspect inventories."); return true; }
+                if (!viewer.hasPermission("jsmp.invsee")) { msg(viewer, "&cYou do not have permission."); return true; }
+                if (args.length != 1) {
+                    msg(viewer, name.equals("invsee") ? "&cUsage: /invsee <player>" : "&cUsage: /ecsee <player>");
+                    return true;
+                }
+                Player target = Bukkit.getPlayerExact(args[0]);
+                if (target == null) { msg(viewer, "&cThat player must be online."); return true; }
+                if (name.equals("invsee")) {
+                    viewer.openInventory(target.getInventory());
+                    msg(viewer, "&aViewing &f" + target.getName() + "&a's inventory. Changes are saved live.");
+                } else {
+                    viewer.openInventory(target.getEnderChest());
+                    msg(viewer, "&aViewing &f" + target.getName() + "&a's ender chest. Changes are saved live.");
+                }
+                return true;
+            }
+            case "daily" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /daily."); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("edit")) {
+                    if (!player.hasPermission("jsmp.daily.admin")) { msg(player, "&cYou do not have permission."); return true; }
+                    openDailyEditor(player);
+                    return true;
+                }
+                if (args.length != 0) { msg(player, "&cUsage: /daily [edit]"); return true; }
+                openDaily(player);
+                return true;
+            }
+            case "afk" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /afk."); return true; }
+                if (args.length != 0) { msg(player, "&cUsage: /afk"); return true; }
+                toggleAfk(player);
+                return true;
+            }
             case "rtp" -> {
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /rtp."); return true; }
                 if (!sender.hasPermission("jsmp.rtp")) { msg(sender, "&cYou do not have permission."); return true; }
-                msg(player, "&eFinding a safe random location...");
-                if (!randomTeleport(player)) msg(player, "&cCould not find a safe location. Try again.");
-                else msg(player, "&aYou have been randomly teleported.");
+                startTeleportCountdown(player, "a random location", () -> randomTeleport(player));
+                return true;
+            }
+            case "sethome" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can set homes."); return true; }
+                if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length != 1 || !validHomeName(args[0])) {
+                    msg(sender, "&cUsage: /sethome <name> (1-16 letters, numbers, _ or -)");
+                    return true;
+                }
+                setHome(player, args[0]);
+                return true;
+            }
+            case "home" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use homes."); return true; }
+                if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length == 0) {
+                    Map<String, Location> playerHomes = homes.get(player.getUniqueId());
+                    if (playerHomes == null || playerHomes.isEmpty()) {
+                        msg(player, "&eYou have no homes. Set one with /sethome <name>.");
+                    } else {
+                        msg(player, "&6Your homes: &f" + String.join("&7, &f", playerHomes.keySet()));
+                    }
+                    return true;
+                }
+                if (args.length != 1 || !validHomeName(args[0])) {
+                    msg(player, "&cUsage: /home <name>");
+                    return true;
+                }
+                if (getHome(player, args[0]) == null) {
+                    msg(player, "&cThat home does not exist or its world is not loaded.");
+                    return true;
+                }
+                startTeleportCountdown(player, "home " + args[0].toLowerCase(Locale.ROOT), () -> {
+                    Location destination = getHome(player, args[0]);
+                    return destination != null && player.teleport(destination);
+                });
+                return true;
+            }
+            case "jsmp" -> {
+                if (!sender.hasPermission("jsmp.admin")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length != 1 || !args[0].equalsIgnoreCase("reload")) {
+                    msg(sender, "&cUsage: /jsmp reload");
+                    return true;
+                }
+                reloadConfig();
+                if (motdManager != null) motdManager.reload();
+                worth = YamlConfiguration.loadConfiguration(worthFile);
+                maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
+                generateWorthCatalogue();
+                migrateRecipeWorthPrices();
+                applyMaintenanceMotd();
+                for (Player online : Bukkit.getOnlinePlayers()) decorateInventory(online);
+                msg(sender, "&aJSMPCore configuration and worth.yml reloaded.");
                 return true;
             }
             case "maintenance" -> {

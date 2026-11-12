@@ -4,12 +4,24 @@ main: me.jsmp.core.JSMPCore
 api-version: '26.3'
 description: JSMP server shop, item worth and player economy.
 authors: [Jigar]
+softdepend: [PlaceholderAPI]
 website: https://github.com/Jigar1234Nob/JSMP-CORE
 
 commands:
   shop:
     description: Opens the JSMP item shop.
     usage: /shop
+  ec:
+    aliases: [enderchest]
+    description: Opens your ender chest.
+    usage: /ec
+  invsee:
+    description: Opens an online player's inventory for inspection and editing.
+    usage: /invsee <player>
+  ecsee:
+    aliases: [enderchestsee]
+    description: Opens an online player's ender chest for inspection and editing.
+    usage: /ecsee <player>
   sell:
     description: Opens the item selling GUI.
     usage: /sell
@@ -36,6 +48,16 @@ commands:
   ungod:
     description: Disables admin invulnerability.
     usage: /ungod
+  daily:
+    description: Opens the daily playtime rewards calendar.
+    usage: /daily
+  ah:
+    aliases: [auction, auctionhouse]
+    description: Opens the JSMP player auction house.
+    usage: /ah [sell <price>|my|claims|search <item>]
+  afk:
+    description: Toggles AFK mode and earns \$1,000 per completed minute.
+    usage: /afk
   rtp:
     description: Teleports you to a random safe location.
     usage: /rtp
@@ -43,10 +65,34 @@ commands:
     aliases: [maintanence]
     description: Toggles server maintenance mode.
     usage: /maintenance [on|off|toggle]
+  sethome:
+    description: Saves a named home.
+    usage: /sethome <name>
+  home:
+    description: Teleports to a saved home.
+    usage: /home <name>
+  jsmp:
+    description: JSMPCore administration commands.
+    usage: /jsmp reload
+  team:
+    aliases: [t]
+    description: Create and manage JSMP teams.
+    usage: /team
+  motd:
+    description: Edit and rotate the server list MOTD.
+    usage: /motd <list|add|set|remove|interval|next>
 
 permissions:
   jsmp.shop:
     default: true
+  jsmp.enderchest:
+    default: true
+  jsmp.invsee:
+    default: op
+  jsmp.auctionhouse:
+    default: true
+  jsmp.auctionhouse.admin:
+    default: op
   jsmp.sell:
     default: true
   jsmp.balance:
@@ -67,5 +113,13 @@ permissions:
     default: op
   jsmp.rtp:
     default: true
+  jsmp.home:
+    default: true
   jsmp.maintenance:
+    default: op
+  jsmp.team:
+    default: true
+  jsmp.motd.admin:
+    default: op
+  jsmp.daily.admin:
     default: op

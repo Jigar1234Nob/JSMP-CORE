@@ -1,21 +1,17 @@
-# Curated JSMPCore shop prices.
-# Blocks remain available. Only common resources, farming supplies and food are included alongside blocks.
-# Netherite, weapons, armour, tools, potions and rare or unnecessary items are excluded.
-# Prices below are base values. economy.price-multiplier in config.yml applies to buying, selling and lore.
-# Set sellable to false or price to 0.0 to disable buying and selling.
+# JSMPCore survival shop prices.
+# Missing survival items are added automatically using vanilla recipe costs and the configured shop premium.
+# Untouched prices from older generated catalogues are migrated once; owner-customised prices are preserved.
+# Sell prices default to 35% of buy prices. Set sellable: false to disable an item.
 items:
   DIAMOND:
-    price: 90.0
+    buy-price: 90000.0
+    sell-price: 45000.0
     sellable: true
   EMERALD:
-    price: 60.0
+    buy-price: 60000.0
+    sell-price: 30000.0
     sellable: true
   DIRT:
-    price: 0.25
+    buy-price: 40.0
+    sell-price: 20.0
     sellable: true
-  BEDROCK:
-    price: 0.0
-    sellable: false
-  BARRIER:
-    price: 0.0
-    sellable: false
