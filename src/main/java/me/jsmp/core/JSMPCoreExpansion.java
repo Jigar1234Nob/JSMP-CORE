@@ -47,8 +47,8 @@ public final class JSMPCoreExpansion extends PlaceholderExpansion {
                 return teams.getTeamPrefix(player.getUniqueId());
             }
             if (params.equalsIgnoreCase("team_tag")) {
-                String teamName = teams.getTeamName(player.getUniqueId());
-                return teamName.isBlank() ? "" : "&8[&6" + teamName + "&8]";
+                String prefix = teams.getTeamPrefix(player.getUniqueId());
+                return prefix.isBlank() ? "" : prefix.substring(0, prefix.length() - 1);
             }
         }
         return null;
