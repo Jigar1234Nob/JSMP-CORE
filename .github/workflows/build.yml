@@ -2,7 +2,7 @@ name: Build JSMPCore
 
 on:
   push:
-    branches: [main, feature/team-motd-recipe-economy]
+    branches: [main, feature/team-motd-recipe-economy, feature/rtp-countdown-homes-reload]
     paths-ignore:
       - 'JSMPCore.jar'
   pull_request:
