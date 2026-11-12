@@ -11,6 +11,17 @@ commands:
   shop:
     description: Opens the JSMP item shop.
     usage: /shop
+  ec:
+    aliases: [enderchest]
+    description: Opens your ender chest.
+    usage: /ec
+  invsee:
+    description: Opens an online player's inventory for inspection and editing.
+    usage: /invsee <player>
+  ecsee:
+    aliases: [enderchestsee]
+    description: Opens an online player's ender chest for inspection and editing.
+    usage: /ecsee <player>
   sell:
     description: Opens the item selling GUI.
     usage: /sell
@@ -74,6 +85,10 @@ commands:
 permissions:
   jsmp.shop:
     default: true
+  jsmp.enderchest:
+    default: true
+  jsmp.invsee:
+    default: op
   jsmp.auctionhouse:
     default: true
   jsmp.auctionhouse.admin:
