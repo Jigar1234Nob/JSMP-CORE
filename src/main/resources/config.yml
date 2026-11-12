@@ -28,6 +28,8 @@ economy:
   high-price-migration-v1: true
   low-value-price-migration-v2: true
   buy-sell-price-migration-v1: true
+  # One-time migration updates untouched generated prices using crafting recipes.
+  recipe-pricing-migration-v1: false
   baltop-size: 10
   minimum-payment: 0.01
 
