@@ -45,6 +45,9 @@ import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ShapelessRecipe;
+import org.bukkit.inventory.ShapedRecipe;
+import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
@@ -174,6 +177,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         loadBalances();
         loadHomes();
         generateWorthCatalogue();
+        migrateRecipeWorthPrices();
         originalMotd = Bukkit.getMotd();
         maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
         motdManager = new MotdManager(this, () -> maintenanceEnabled);
@@ -429,11 +433,66 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private double lowValuePrice(Material material) {
-        // Everyday blocks, basic resources and ordinary food should be affordable.
-        return defaultWorth(material) <= 2.0 ? 40.0 : 60.0;
+        // Basic resources stay accessible, but crafted goods inherit ingredient costs.
+        return baseWorth(material) <= 2.0 ? 40.0 : 60.0;
     }
 
     private double defaultWorth(Material material) {
+        return recipeWorth(material, new HashSet<>(), 0);
+    }
+
+    private double recipeWorth(Material material, Set<Material> visiting, int depth) {
+        if (material == null || material.isAir()) return 0.0;
+        double rawPrice = rawMaterialPrice(material);
+        if (depth >= 10 || !visiting.add(material)) return rawPrice;
+
+        double cheapestRecipe = Double.POSITIVE_INFINITY;
+        for (Recipe recipe : Bukkit.getRecipesFor(new ItemStack(material))) {
+            Map<Material, Integer> ingredients = new LinkedHashMap<>();
+            if (recipe instanceof ShapedRecipe shaped) {
+                Map<Character, ItemStack> choices = shaped.getIngredientMap();
+                for (String row : shaped.getShape()) {
+                    for (char symbol : row.toCharArray()) {
+                        ItemStack ingredient = choices.get(symbol);
+                        if (ingredient != null && !ingredient.getType().isAir()) {
+                            ingredients.merge(ingredient.getType(), 1, Integer::sum);
+                        }
+                    }
+                }
+            } else if (recipe instanceof ShapelessRecipe shapeless) {
+                for (ItemStack ingredient : shapeless.getIngredientList()) {
+                    if (ingredient != null && !ingredient.getType().isAir()) {
+                        ingredients.merge(ingredient.getType(), ingredient.getAmount(), Integer::sum);
+                    }
+                }
+            } else {
+                continue;
+            }
+
+            if (ingredients.isEmpty()) continue;
+            double ingredientCost = 0.0;
+            Set<Material> branch = new HashSet<>(visiting);
+            for (Map.Entry<Material, Integer> ingredient : ingredients.entrySet()) {
+                ingredientCost += recipeWorth(ingredient.getKey(), branch, depth + 1) * ingredient.getValue();
+            }
+            int outputAmount = Math.max(1, recipe.getResult().getAmount());
+            // 25% shop premium covers convenience and stops crafted items being cheaper than ingredients.
+            double craftedPrice = ingredientCost / outputAmount * 1.25;
+            if (Double.isFinite(craftedPrice) && craftedPrice > 0.0) {
+                cheapestRecipe = Math.min(cheapestRecipe, craftedPrice);
+            }
+        }
+        visiting.remove(material);
+        return Double.isFinite(cheapestRecipe) ? Math.max(40.0, cheapestRecipe) : rawPrice;
+    }
+
+    private double rawMaterialPrice(Material material) {
+        double base = baseWorth(material);
+        if (base <= 5.0) return lowValuePrice(material);
+        return Math.max(1001.0, base * 1000.0);
+    }
+
+    private double baseWorth(Material material) {
         String n = material.name();
         if (List.of("BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK", "REPEATING_COMMAND_BLOCK",
                 "STRUCTURE_BLOCK", "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK",
@@ -442,6 +501,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (n.contains("ANCIENT_DEBRIS")) return 180.0;
         if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) return n.endsWith("_BLOCK") ? 900.0 : 90.0;
         if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) return n.endsWith("_BLOCK") ? 600.0 : 60.0;
+        if (n.equals("OBSIDIAN") || n.equals("CRYING_OBSIDIAN")) return 18.0;
         if (n.contains("AMETHYST")) return 8.0;
         if (n.contains("GOLD")) return n.endsWith("_INGOT") ? 14.0 : 3.0;
         if (n.contains("IRON")) return n.endsWith("_INGOT") ? 8.0 : 2.0;
@@ -463,6 +523,65 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (n.contains("POTION")) return 8.0;
         if (material.isBlock()) return 1.0;
         return 1.0;
+    }
+
+    private double legacyGeneratedBuyPrice(Material material) {
+        String n = material.name();
+        double legacy;
+        if (List.of("BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK", "REPEATING_COMMAND_BLOCK",
+                "STRUCTURE_BLOCK", "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK",
+                "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n) || n.contains("NETHERITE")) return 1001.0;
+        if (n.contains("ANCIENT_DEBRIS")) legacy = 180.0;
+        else if (n.equals("DIAMOND") || n.equals("DIAMOND_BLOCK")) legacy = n.endsWith("_BLOCK") ? 900.0 : 90.0;
+        else if (n.equals("EMERALD") || n.equals("EMERALD_BLOCK")) legacy = n.endsWith("_BLOCK") ? 600.0 : 60.0;
+        else if (n.contains("AMETHYST")) legacy = 8.0;
+        else if (n.contains("GOLD")) legacy = n.endsWith("_INGOT") ? 14.0 : 3.0;
+        else if (n.contains("IRON")) legacy = n.endsWith("_INGOT") ? 8.0 : 2.0;
+        else if (n.contains("COPPER")) legacy = n.endsWith("_INGOT") ? 4.0 : 1.0;
+        else if (n.contains("COAL")) legacy = 3.0;
+        else if (n.contains("REDSTONE")) legacy = 2.5;
+        else if (n.contains("LAPIS")) legacy = 4.0;
+        else if (n.contains("QUARTZ")) legacy = 5.0;
+        else if (n.contains("BOOK") || n.contains("ENCHANT")) legacy = 12.0;
+        else if (n.contains("TOTEM")) legacy = 100.0;
+        else if (n.contains("ELYTRA")) legacy = 300.0;
+        else if (n.contains("SHULKER")) legacy = 45.0;
+        else if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
+                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) legacy = 12.0;
+        else if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
+                || n.endsWith("_BOOTS")) legacy = 15.0;
+        else if (material.isEdible()) legacy = 2.0;
+        else if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_PLANKS")) legacy = 1.5;
+        else if (n.contains("POTION")) legacy = 8.0;
+        else if (material.isBlock()) legacy = 1.0;
+        else legacy = 1.0;
+        return legacy <= 5.0 ? (legacy <= 2.0 ? 40.0 : 60.0) : Math.max(1001.0, legacy * 1000.0);
+    }
+
+    private void migrateRecipeWorthPrices() {
+        if (getConfig().getBoolean("economy.recipe-pricing-migration-v1", false)) return;
+        double sellRate = Math.max(0.0, Math.min(1.0, getConfig().getDouble("economy.default-sell-rate", 0.5)));
+        int updated = 0;
+        for (Material material : Material.values()) {
+            if (!isShopCatalogueItem(material) || isRestrictedShopItem(material)) continue;
+            String path = "items." + material.name();
+            if (!worth.contains(path + ".buy-price")) continue;
+            double oldBuy = legacyGeneratedBuyPrice(material);
+            double configuredBuy = worth.getDouble(path + ".buy-price");
+            if (Math.abs(configuredBuy - oldBuy) > 0.01) continue; // Preserve owner-customised prices.
+            double newBuy = roundMoney(defaultWorth(material));
+            worth.set(path + ".buy-price", newBuy);
+            double oldSell = roundMoney(oldBuy * sellRate);
+            if (Math.abs(worth.getDouble(path + ".sell-price", -1.0) - oldSell) <= 0.01) {
+                worth.set(path + ".sell-price", roundMoney(newBuy * sellRate));
+            }
+            updated++;
+        }
+        getConfig().set("economy.recipe-pricing-migration-v1", true);
+        saveConfig();
+        saveWorth();
+        getLogger().info("Recipe-based economy pricing updated " + updated
+                + " untouched generated entries. Custom worth.yml prices were preserved.");
     }
 
     private void saveWorth() {
@@ -1592,6 +1711,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 worth = YamlConfiguration.loadConfiguration(worthFile);
                 maintenanceEnabled = getConfig().getBoolean("maintenance.enabled", false);
                 generateWorthCatalogue();
+                migrateRecipeWorthPrices();
                 applyMaintenanceMotd();
                 for (Player online : Bukkit.getOnlinePlayers()) decorateInventory(online);
                 msg(sender, "&aJSMPCore configuration and worth.yml reloaded.");
