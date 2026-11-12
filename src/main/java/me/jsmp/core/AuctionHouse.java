@@ -500,7 +500,7 @@ public final class AuctionHouse implements CommandExecutor, Listener {
 
     private Listing findListing(long id) {
         try (PreparedStatement statement = database.prepareStatement(
-                "SELECT id,seller_uuid,seller_name,item,price,created_at,expires_at FROM auction_listings WHERE id=? AND status='ACTIVE'")) {
+                "SELECT id,seller_uuid,seller_name,item,price,created_at,expires_at FROM auction_listings WHERE id=?")) {
             statement.setLong(1, id);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return null;
