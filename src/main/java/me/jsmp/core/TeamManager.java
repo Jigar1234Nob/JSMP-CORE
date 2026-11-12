@@ -170,8 +170,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     }
 
     private String colorCode(String color) {
-        return ChatColor.valueOf(validTeamColor(color)).getChar() == '\u0000'
-                ? "6" : String.valueOf(ChatColor.valueOf(validTeamColor(color)).getChar());
+        return String.valueOf(ChatColor.valueOf(validTeamColor(color)).getChar());
     }
 
     private Component teamPrefix(UUID playerId) {
@@ -179,7 +178,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
         if (name == null || name.isBlank()) return Component.empty();
         String colorName = cachedTeamColors.getOrDefault(playerId, "GOLD");
         ChatColor legacy = ChatColor.valueOf(validTeamColor(colorName));
-        net.kyori.adventure.text.format.TextColor textColor = net.kyori.adventure.text.format.TextColor.fromLegacyFormat(legacy);
+        NamedTextColor textColor = NamedTextColor.NAMES.value(legacy.name().toLowerCase(Locale.ROOT));
         return Component.text("[")
                 .color(NamedTextColor.DARK_GRAY)
                 .append(Component.text(name).color(textColor == null ? NamedTextColor.GOLD : textColor))
