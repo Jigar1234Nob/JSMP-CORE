@@ -119,7 +119,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -1092,6 +1092,85 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return "&cMYTHIC";
     }
 
+    private void openDailyEditor(Player player) {
+        List<Map<?, ?>> rewards = dailyRewards();
+        MenuHolder holder = new MenuHolder(MenuType.DAILY_EDIT, null, 0);
+        Inventory inventory = Bukkit.createInventory(holder, 54, color("&8Daily Reward Editor"));
+        holder.inventory = inventory;
+        for (int i = 0; i < rewards.size() && i < 45; i++) {
+            Map<?, ?> reward = rewards.get(i);
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(reward, "material", "BREAD")));
+            if (material == null || material.isAir()) material = Material.BREAD;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(reward, "amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            String name = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
+            inventory.setItem(i, icon(material, "&ePool reward #" + (i + 1), List.of(
+                    "&7Item: &f" + name,
+                    "&7Amount: &f" + amount,
+                    "&eLeft-click: change amount",
+                    "&eRight-click: change item",
+                    "&8Changes apply to newly generated calendars."
+            )));
+        }
+        inventory.setItem(49, icon(Material.BOOK, "&6Daily Reward Pool", List.of(
+                "&7Players receive their own shuffled calendar.",
+                "&7Existing calendars are not rerolled when edited.",
+                "&7Only the balanced item whitelist is available."
+        )));
+        inventory.setItem(53, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
+        player.openInventory(inventory);
+    }
+
+    private void editDailyReward(Player player, int index, boolean changeMaterial) {
+        List<Map<?, ?>> current = dailyRewards();
+        if (index < 0 || index >= current.size()) return;
+        List<Map<String, Object>> updated = new ArrayList<>();
+        for (Map<?, ?> entry : current) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> value : entry.entrySet()) {
+                copy.put(String.valueOf(value.getKey()), value.getValue());
+            }
+            updated.add(copy);
+        }
+
+        Map<String, Object> reward = updated.get(index);
+        Material[] allowed = {
+                Material.BREAD, Material.COAL, Material.COBBLESTONE, Material.OAK_LOG,
+                Material.COOKED_BEEF, Material.IRON_NUGGET, Material.TORCH, Material.ARROW,
+                Material.STRING, Material.LEATHER, Material.IRON_INGOT, Material.GOLD_INGOT,
+                Material.LAPIS_LAZULI, Material.REDSTONE, Material.EXPERIENCE_BOTTLE,
+                Material.ENDER_PEARL, Material.OBSIDIAN, Material.EMERALD, Material.DIAMOND,
+                Material.GOLDEN_APPLE, Material.NAME_TAG, Material.SADDLE, Material.BOOKSHELF,
+                Material.IRON_PICKAXE, Material.SHIELD, Material.BOW, Material.WATER_BUCKET,
+                Material.COPPER_INGOT, Material.PRISMARINE_SHARD, Material.GLOWSTONE_DUST
+        };
+        if (changeMaterial) {
+            Material old = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "BREAD")));
+            int position = 0;
+            for (int i = 0; i < allowed.length; i++) if (allowed[i] == old) { position = i; break; }
+            Material next = allowed[(position + 1) % allowed.length];
+            reward.put("material", next.name());
+            reward.put("name", next.name().replace('_', ' ').toLowerCase(Locale.ROOT));
+        } else {
+            Material material = Material.matchMaterial(String.valueOf(reward.getOrDefault("material", "BREAD")));
+            if (material == null || material.isAir()) material = Material.BREAD;
+            int[] amounts = {1, 2, 4, 8, 16, 32};
+            int old;
+            try { old = Integer.parseInt(String.valueOf(reward.getOrDefault("amount", 1))); }
+            catch (NumberFormatException exception) { old = 1; }
+            int next = amounts[0];
+            for (int i = 0; i < amounts.length; i++) {
+                if (amounts[i] == old) { next = amounts[(i + 1) % amounts.length]; break; }
+                if (amounts[i] < old) next = amounts[i];
+            }
+            reward.put("amount", Math.min(material.getMaxStackSize(), next));
+        }
+        getConfig().set("daily.rewards", updated);
+        saveConfig();
+        openDailyEditor(player);
+    }
+
     private void openDaily(Player player) {
         List<Map<?, ?>> rewards = dailyCalendar(player.getUniqueId());
         if (rewards.isEmpty()) {
@@ -1588,6 +1667,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             return;
         }
 
+        if (holder.type == MenuType.DAILY_EDIT) {
+            event.setCancelled(true);
+            if (raw == 53) player.closeInventory();
+            else if (raw >= 0 && raw < 45) editDailyReward(player, raw, event.isRightClick());
+            return;
+        }
+
         if (holder.type == MenuType.SHOP_ITEMS) {
             event.setCancelled(true);
             if (raw == 45) {
@@ -1695,7 +1781,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
             case "daily" -> {
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /daily."); return true; }
-                if (args.length != 0) { msg(player, "&cUsage: /daily"); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("edit")) {
+                    if (!player.hasPermission("jsmp.daily.admin")) { msg(player, "&cYou do not have permission."); return true; }
+                    openDailyEditor(player);
+                    return true;
+                }
+                if (args.length != 0) { msg(player, "&cUsage: /daily [edit]"); return true; }
                 openDaily(player);
                 return true;
             }
