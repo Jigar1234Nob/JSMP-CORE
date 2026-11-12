@@ -573,13 +573,21 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             if (!worth.contains(path + ".buy-price")) continue;
             double oldBuy = legacyGeneratedBuyPrice(material);
             double configuredBuy = worth.getDouble(path + ".buy-price");
-            if (Math.abs(configuredBuy - oldBuy) > 0.01) continue; // Preserve owner-customised prices.
+            double legacyFilePrice = worth.getDouble(path + ".price", Double.NaN);
+            boolean untouchedGeneratedPrice = Math.abs(configuredBuy - oldBuy) <= 0.01;
+            boolean untouchedLegacyPrice = Double.isFinite(legacyFilePrice)
+                    && (Math.abs(legacyFilePrice * 1000.0 - oldBuy) <= 0.01
+                    || (oldBuy == 40.0 && legacyFilePrice >= 0.0 && legacyFilePrice <= 2.0)
+                    || (oldBuy == 60.0 && legacyFilePrice > 2.0 && legacyFilePrice <= 5.0));
+            if (!untouchedGeneratedPrice && !untouchedLegacyPrice) continue; // Preserve owner-customised prices.
+
             double newBuy = roundMoney(defaultWorth(material));
             worth.set(path + ".buy-price", newBuy);
-            double oldSell = roundMoney(oldBuy * sellRate);
+            double oldSell = roundMoney(configuredBuy * sellRate);
             if (Math.abs(worth.getDouble(path + ".sell-price", -1.0) - oldSell) <= 0.01) {
                 worth.set(path + ".sell-price", roundMoney(newBuy * sellRate));
             }
+            if (untouchedLegacyPrice) worth.set(path + ".price", null);
             updated++;
         }
         getConfig().set("economy.recipe-pricing-migration-v1", true);
