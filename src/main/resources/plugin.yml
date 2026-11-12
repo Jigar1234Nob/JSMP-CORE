@@ -67,6 +67,9 @@ commands:
     aliases: [t]
     description: Create and manage JSMP teams.
     usage: /team
+  motd:
+    description: Edit and rotate the server list MOTD.
+    usage: /motd <list|add|set|remove|interval|next>
 
 permissions:
   jsmp.shop:
@@ -101,3 +104,5 @@ permissions:
     default: op
   jsmp.team:
     default: true
+  jsmp.motd.admin:
+    default: op
