@@ -40,6 +40,10 @@ commands:
   daily:
     description: Opens the daily playtime rewards calendar.
     usage: /daily
+  ah:
+    aliases: [auction, auctionhouse]
+    description: Opens the JSMP player auction house.
+    usage: /ah [sell <price>|my|claims|search <item>]
   afk:
     description: Toggles AFK mode and earns \$1,000 per completed minute.
     usage: /afk
@@ -63,6 +67,10 @@ commands:
 permissions:
   jsmp.shop:
     default: true
+  jsmp.auctionhouse:
+    default: true
+  jsmp.auctionhouse.admin:
+    default: op
   jsmp.sell:
     default: true
   jsmp.balance:
