@@ -1,8 +1,7 @@
-# Curated JSMPCore shop prices.
-# New catalogue entries are calculated from vanilla crafting recipe ingredient costs plus the configured shop premium.
-# Existing owner-customised prices are preserved. Untouched old generated prices are migrated once.
-# Buy and sell prices are stored separately. Sell prices default to 50% of buy prices.
-# Set sellable to false or both prices to 0.0 to disable buying and selling.
+# JSMPCore survival shop prices.
+# Missing survival items are added automatically using vanilla recipe costs and the configured shop premium.
+# Untouched prices from older generated catalogues are migrated once; owner-customised prices are preserved.
+# Sell prices default to 35% of buy prices. Set sellable: false to disable an item.
 items:
   DIAMOND:
     buy-price: 90000.0
@@ -16,11 +15,3 @@ items:
     buy-price: 40.0
     sell-price: 20.0
     sellable: true
-  BEDROCK:
-    buy-price: 1001.0
-    sell-price: 0.0
-    sellable: false
-  BARRIER:
-    buy-price: 1001.0
-    sell-price: 0.0
-    sellable: false
