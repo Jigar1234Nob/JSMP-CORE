@@ -1,4 +1,6 @@
 # Curated JSMPCore shop prices.
+# New catalogue entries are calculated from vanilla crafting recipe ingredient costs plus the configured shop premium.
+# Existing owner-customised prices are preserved. Untouched old generated prices are migrated once.
 # Buy and sell prices are stored separately. Sell prices default to 50% of buy prices.
 # Set sellable to false or both prices to 0.0 to disable buying and selling.
 items:
