@@ -99,6 +99,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private boolean maintenanceEnabled;
     private String originalMotd;
     private NamespacedKey worthLoreKey;
+    private AuctionHouse auctionHouse;
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -184,6 +185,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
+        try {
+            auctionHouse = new AuctionHouse(this);
+            auctionHouse.register();
+        } catch (SQLException exception) {
+            getLogger().severe("Could not initialize Auction House: " + exception.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             remember(player);
@@ -208,6 +217,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         saveBalances();
         saveWorth();
         for (UUID uuid : new ArrayList<>(dailyTasks.keySet())) stopDailyTracking(uuid);
+        if (auctionHouse != null) auctionHouse.close();
         closeEconomyDatabase();
         if (originalMotd != null) Bukkit.setMotd(originalMotd);
     }
@@ -472,11 +482,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return money(balance(uuid));
     }
 
+    public double getBalance(UUID uuid) { return balance(uuid); }
+
+    public void setBalance(UUID uuid, double amount) { setBalanceInternal(uuid, amount); }
+
     private double balance(UUID uuid) {
         return balances.getOrDefault(uuid, 0.0);
     }
 
-    private void setBalance(UUID uuid, double amount) {
+    private void setBalanceInternal(UUID uuid, double amount) {
         balances.put(uuid, roundMoney(Math.max(0, amount)));
         saveBalances();
     }
