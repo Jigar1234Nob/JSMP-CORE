@@ -1,6 +1,7 @@
 package me.jsmp.core;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -17,6 +18,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -28,6 +30,7 @@ import java.util.stream.Collectors;
 
 public final class TeamManager implements Listener, CommandExecutor, TabCompleter {
     private static final long INVITE_LIFETIME_MS = TimeUnit.MINUTES.toMillis(5);
+    private static TeamManager instance;
 
     private final JavaPlugin plugin;
     private final File file;
@@ -55,6 +58,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
 
     public TeamManager(JavaPlugin plugin) {
         this.plugin = plugin;
+        instance = this;
         this.file = new File(plugin.getDataFolder(), "teams.yml");
         load();
         if (plugin.getCommand("team") != null) {
@@ -64,6 +68,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
             plugin.getLogger().severe("The /team command is missing from plugin.yml.");
         }
         Bukkit.getPluginManager().registerEvents(this, plugin);
+        for (Player online : Bukkit.getOnlinePlayers()) updatePlayerDisplay(online);
     }
 
     private void load() {
@@ -132,6 +137,33 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
         }
     }
 
+    public static TeamManager getInstance() {
+        return instance;
+    }
+
+    public String getTeamName(UUID playerId) {
+        Team team = teamOf(playerId);
+        return team == null ? "" : team.name;
+    }
+
+    public String getTeamPrefix(UUID playerId) {
+        Team team = teamOf(playerId);
+        return team == null ? "" : "&8[&6" + team.name + "&8] ";
+    }
+
+    private Component teamPrefix(UUID playerId) {
+        Team team = teamOf(playerId);
+        if (team == null) return Component.empty();
+        return Component.text("[")
+                .color(NamedTextColor.DARK_GRAY)
+                .append(Component.text(team.name).color(NamedTextColor.GOLD))
+                .append(Component.text("] ").color(NamedTextColor.DARK_GRAY));
+    }
+
+    private void updatePlayerDisplay(Player player) {
+        player.playerListName(teamPrefix(player.getUniqueId()).append(Component.text(player.getName())));
+    }
+
     private String normalize(String name) {
         return name.toLowerCase(Locale.ROOT);
     }
@@ -171,6 +203,8 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
         team.members.remove(member);
         membership.remove(member);
         teamChat.remove(member);
+        Player online = Bukkit.getPlayer(member);
+        if (online != null) updatePlayerDisplay(online);
     }
 
     private void disband(Team team) {
@@ -228,6 +262,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
                 Team created = new Team(args[1], player.getUniqueId(), "invite");
                 teams.put(key, created);
                 membership.put(player.getUniqueId(), key);
+                updatePlayerDisplay(player);
                 save();
                 send(player, "&aCreated team &f" + created.name + "&a. Use &f/team invite <player> &ato recruit members.");
                 return true;
@@ -282,6 +317,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
                 }
                 invitedTeam.members.add(player.getUniqueId());
                 membership.put(player.getUniqueId(), invite.teamKey());
+                updatePlayerDisplay(player);
                 save();
                 notifyTeam(invitedTeam, "&a" + player.getName() + " joined the team.");
                 return true;
@@ -307,6 +343,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
                 }
                 target.members.add(player.getUniqueId());
                 membership.put(player.getUniqueId(), key);
+                updatePlayerDisplay(player);
                 save();
                 notifyTeam(target, "&a" + player.getName() + " joined the team.");
                 return true;
@@ -394,9 +431,15 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onTeamChat(AsyncChatEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
+        if (teamOf(uuid) != null) {
+            Component prefix = teamPrefix(uuid);
+            event.renderer((source, sourceDisplayName, message, viewer) ->
+                    prefix.append(sourceDisplayName).append(Component.text(": ")).append(message));
+        }
         if (!teamChat.contains(uuid)) return;
         event.setCancelled(true);
-        Component chatMessage = Component.text("[Team] " + event.getPlayer().getName() + ": ")
+        Component chatMessage = teamPrefix(uuid)
+                .append(Component.text(event.getPlayer().getName() + ": "))
                 .append(event.message());
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (!teamChat.contains(uuid)) return;
@@ -410,6 +453,11 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
                 if (online != null) online.sendMessage(chatMessage);
             }
         });
+    }
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        updatePlayerDisplay(event.getPlayer());
     }
 
     @EventHandler
