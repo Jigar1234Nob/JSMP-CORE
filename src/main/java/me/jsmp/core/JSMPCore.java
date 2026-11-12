@@ -1823,6 +1823,31 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 openCategories(player);
                 return true;
             }
+            case "ec" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open an ender chest."); return true; }
+                if (!player.hasPermission("jsmp.enderchest")) { msg(player, "&cYou do not have permission."); return true; }
+                if (args.length != 0) { msg(player, "&cUsage: /ec"); return true; }
+                player.openInventory(player.getEnderChest());
+                return true;
+            }
+            case "invsee", "ecsee" -> {
+                if (!(sender instanceof Player viewer)) { msg(sender, "&cOnly players can inspect inventories."); return true; }
+                if (!viewer.hasPermission("jsmp.invsee")) { msg(viewer, "&cYou do not have permission."); return true; }
+                if (args.length != 1) {
+                    msg(viewer, name.equals("invsee") ? "&cUsage: /invsee <player>" : "&cUsage: /ecsee <player>");
+                    return true;
+                }
+                Player target = Bukkit.getPlayerExact(args[0]);
+                if (target == null) { msg(viewer, "&cThat player must be online."); return true; }
+                if (name.equals("invsee")) {
+                    viewer.openInventory(target.getInventory());
+                    msg(viewer, "&aViewing &f" + target.getName() + "&a's inventory. Changes are saved live.");
+                } else {
+                    viewer.openInventory(target.getEnderChest());
+                    msg(viewer, "&aViewing &f" + target.getName() + "&a's ender chest. Changes are saved live.");
+                }
+                return true;
+            }
             case "daily" -> {
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use /daily."); return true; }
                 if (args.length == 1 && args[0].equalsIgnoreCase("edit")) {
