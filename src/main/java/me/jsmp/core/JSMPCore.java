@@ -104,6 +104,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private NamespacedKey worthLoreKey;
     private AuctionHouse auctionHouse;
     private MotdManager motdManager;
+    private final Map<Material, Double> recipePriceCache = new EnumMap<>(Material.class);
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -361,6 +362,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void generateWorthCatalogue() {
+        recipePriceCache.clear();
         if (!worth.isConfigurationSection("items")) worth.createSection("items");
 
         int added = 0;
@@ -441,6 +443,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     private double recipeWorth(Material material, Set<Material> visiting, int depth) {
         if (material == null || material.isAir()) return 0.0;
+        Double cached = recipePriceCache.get(material);
+        if (cached != null) return cached;
         double rawPrice = rawMaterialPrice(material);
         if (depth >= 10 || !visiting.add(material)) return rawPrice;
 
@@ -474,14 +478,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 ingredientCost += recipeWorth(ingredient.getKey(), branch, depth + 1) * ingredient.getValue();
             }
             int outputAmount = Math.max(1, recipe.getResult().getAmount());
-            // 25% shop premium covers convenience and stops crafted items being cheaper than ingredients.
-            double craftedPrice = ingredientCost / outputAmount * 1.25;
+            // A configurable shop premium covers convenience and discourages crafting-to-resell loops.
+            double premium = Math.max(0.0, getConfig().getDouble("economy.recipe-price-premium", 0.25));
+            double craftedPrice = ingredientCost / outputAmount * (1.0 + premium);
             if (Double.isFinite(craftedPrice) && craftedPrice > 0.0) {
                 cheapestRecipe = Math.min(cheapestRecipe, craftedPrice);
             }
         }
         visiting.remove(material);
-        return Double.isFinite(cheapestRecipe) ? Math.max(40.0, cheapestRecipe) : rawPrice;
+        double calculated = Double.isFinite(cheapestRecipe) ? Math.max(40.0, cheapestRecipe) : rawPrice;
+        recipePriceCache.put(material, calculated);
+        return calculated;
     }
 
     private double rawMaterialPrice(Material material) {
