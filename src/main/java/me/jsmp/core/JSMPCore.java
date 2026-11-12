@@ -435,8 +435,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private double lowValuePrice(Material material) {
-        // Basic resources stay accessible, but crafted goods inherit ingredient costs.
-        return baseWorth(material) <= 2.0 ? 40.0 : 60.0;
+        return Math.max(0.05, baseWorth(material));
     }
 
     private double defaultWorth(Material material) {
@@ -488,56 +487,68 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
         }
         visiting.remove(material);
-        double calculated = Double.isFinite(cheapestRecipe) ? Math.max(40.0, cheapestRecipe) : rawPrice;
+        double calculated = Double.isFinite(cheapestRecipe)
+                ? Math.max(0.05, Math.min(5000.0, cheapestRecipe)) : rawPrice;
         recipePriceCache.put(material, calculated);
         return calculated;
     }
 
     private double rawMaterialPrice(Material material) {
-        double base = baseWorth(material);
-        if (base <= 5.0) return lowValuePrice(material);
-        return Math.max(1001.0, base * 1000.0);
+        return Math.max(0.05, baseWorth(material));
     }
 
+    /*
+     * Prices are in normal server-economy dollars, not multiplied by 1,000.
+     * Recipe-derived prices make crafted gear cost more than its raw ingredients.
+     */
     private double baseWorth(Material material) {
         String n = material.name();
-        if (List.of("BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK", "REPEATING_COMMAND_BLOCK",
-                "STRUCTURE_BLOCK", "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK",
-                "LIGHT", "END_PORTAL_FRAME", "SPAWNER").contains(n)) return 0.0;
-        if (n.contains("NETHERITE")) return 0.0;
-        if (n.contains("ANCIENT_DEBRIS")) return 180.0;
-        if (n.endsWith("_DIAMOND_ORE") || n.equals("DIAMOND")) return 90.0;
-        if (n.endsWith("_EMERALD_ORE") || n.equals("EMERALD")) return 60.0;
-        if (n.equals("DIAMOND_BLOCK")) return 900.0;
-        if (n.equals("EMERALD_BLOCK")) return 600.0;
-        if (n.endsWith("_IRON_ORE") || n.equals("RAW_IRON")) return 8.0;
-        if (n.endsWith("_GOLD_ORE") || n.equals("RAW_GOLD")) return 14.0;
-        if (n.endsWith("_COPPER_ORE") || n.equals("RAW_COPPER")) return 4.0;
-        if (n.endsWith("_REDSTONE_ORE")) return 2.5;
-        if (n.endsWith("_LAPIS_ORE")) return 4.0;
-        if (n.endsWith("_COAL_ORE")) return 3.0;
-        if (n.equals("OBSIDIAN") || n.equals("CRYING_OBSIDIAN")) return 18.0;
-        if (n.contains("AMETHYST")) return 8.0;
-        if (n.contains("GOLD")) return n.endsWith("_INGOT") ? 14.0 : 3.0;
-        if (n.contains("IRON")) return n.endsWith("_INGOT") ? 8.0 : 2.0;
-        if (n.contains("COPPER")) return n.endsWith("_INGOT") ? 4.0 : 1.0;
-        if (n.contains("COAL")) return 3.0;
+        if (n.equals("DIAMOND") || n.endsWith("_DIAMOND_ORE")) return 120.0;
+        if (n.equals("EMERALD") || n.endsWith("_EMERALD_ORE")) return 80.0;
+        if (n.equals("DIAMOND_BLOCK")) return 1080.0;
+        if (n.equals("EMERALD_BLOCK")) return 720.0;
+        if (n.equals("ANCIENT_DEBRIS")) return 180.0;
+        if (n.equals("NETHERITE_INGOT")) return 500.0;
+        if (n.equals("RAW_IRON") || n.endsWith("_IRON_ORE")) return 8.0;
+        if (n.equals("IRON_INGOT")) return 12.0;
+        if (n.equals("RAW_GOLD") || n.endsWith("_GOLD_ORE")) return 10.0;
+        if (n.equals("GOLD_INGOT")) return 16.0;
+        if (n.equals("RAW_COPPER") || n.endsWith("_COPPER_ORE")) return 3.0;
+        if (n.equals("COPPER_INGOT")) return 5.0;
+        if (n.equals("COAL") || n.equals("CHARCOAL") || n.endsWith("_COAL_ORE")) return 3.0;
         if (n.contains("REDSTONE")) return 2.5;
-        if (n.contains("LAPIS")) return 4.0;
+        if (n.contains("LAPIS")) return 3.5;
         if (n.contains("QUARTZ")) return 5.0;
-        if (n.contains("BOOK") || n.contains("ENCHANT")) return 12.0;
-        if (n.contains("TOTEM")) return 100.0;
-        if (n.contains("ELYTRA")) return 300.0;
-        if (n.contains("SHULKER")) return 45.0;
-        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
-                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) return 12.0;
-        if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
-                || n.endsWith("_BOOTS")) return 15.0;
+        if (n.contains("AMETHYST")) return 6.0;
+        if (n.equals("OBSIDIAN") || n.equals("CRYING_OBSIDIAN")) return 12.0;
+        if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_STEM") || n.endsWith("_HYPHAE")) return 3.0;
+        if (n.endsWith("_PLANKS")) return 0.8;
+        if (n.equals("DIRT") || n.equals("COARSE_DIRT") || n.equals("ROOTED_DIRT")) return 0.25;
+        if (n.equals("COBBLESTONE") || n.equals("GRAVEL") || n.equals("SAND") || n.equals("RED_SAND")) return 0.4;
+        if (n.equals("STONE") || n.equals("DEEPSLATE") || n.equals("TUFF")) return 0.6;
+        if (n.contains("GLASS")) return 0.8;
+        if (n.contains("WOOL")) return 2.0;
+        if (n.contains("CONCRETE")) return 1.5;
+        if (n.contains("TERRACOTTA")) return 1.5;
+        if (n.contains("BOOK")) return 4.0;
+        if (n.contains("POTION")) return 12.0;
+        if (n.equals("ENDER_PEARL")) return 12.0;
+        if (n.equals("BLAZE_ROD")) return 10.0;
+        if (n.equals("GHAST_TEAR")) return 18.0;
+        if (n.equals("SLIME_BALL")) return 5.0;
+        if (n.equals("GUNPOWDER")) return 3.0;
+        if (n.equals("LEATHER")) return 4.0;
+        if (n.equals("STRING")) return 1.5;
+        if (n.equals("WHEAT") || n.equals("CARROT") || n.equals("POTATO") || n.equals("BEETROOT")) return 1.0;
+        if (n.endsWith("_SEEDS")) return 0.35;
+        if (n.equals("SUGAR_CANE") || n.equals("BAMBOO") || n.equals("CACTUS")) return 0.75;
         if (material.isEdible()) return 2.0;
-        if (n.endsWith("_LOG") || n.endsWith("_WOOD") || n.endsWith("_PLANKS")) return 1.5;
-        if (n.contains("POTION")) return 8.0;
-        if (material.isBlock()) return 1.0;
-        return 1.0;
+        if (n.endsWith("_SWORD") || n.endsWith("_PICKAXE") || n.endsWith("_AXE")
+                || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) return 8.0;
+        if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS")
+                || n.endsWith("_BOOTS")) return 10.0;
+        if (material.isBlock()) return 0.75;
+        return 1.5;
     }
 
     private double legacyGeneratedBuyPrice(Material material) {
@@ -677,31 +688,24 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private boolean isRestrictedShopItem(Material material) {
         String n = material.name();
         if (n.contains("NETHERITE")) return true;
-        return n.equals("ELYTRA") || n.equals("DRAGON_EGG") || n.equals("DRAGON_HEAD")
-                || n.equals("DRAGON_WALL_HEAD") || n.equals("NETHER_STAR") || n.equals("BEACON")
-                || n.equals("TOTEM_OF_UNDYING") || n.equals("SHULKER_SHELL") || n.startsWith("SHULKER_BOX")
-                || n.equals("END_CRYSTAL") || n.equals("SPAWNER") || n.equals("ENCHANTED_GOLDEN_APPLE")
-                || n.equals("TRIDENT") || n.equals("MACE") || n.equals("WITHER_SKELETON_SKULL")
-                || n.equals("WITHER_SKELETON_WALL_SKULL");
+        if (n.endsWith("_SPAWN_EGG")) return true;
+        return List.of(
+                "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
+                "REPEATING_COMMAND_BLOCK", "COMMAND_BLOCK_MINECART", "STRUCTURE_BLOCK",
+                "STRUCTURE_VOID", "JIGSAW", "DEBUG_STICK", "KNOWLEDGE_BOOK", "LIGHT",
+                "END_PORTAL_FRAME", "END_GATEWAY", "SPAWNER", "BUDDING_AMETHYST",
+                "REINFORCED_DEEPSLATE", "DRAGON_EGG", "DRAGON_HEAD", "DRAGON_WALL_HEAD",
+                "ELYTRA", "NETHER_STAR", "BEACON", "TOTEM_OF_UNDYING", "SHULKER_SHELL",
+                "END_CRYSTAL", "ENCHANTED_GOLDEN_APPLE", "TRIDENT", "MACE",
+                "WITHER_SKELETON_SKULL", "WITHER_SKELETON_WALL_SKULL"
+        ).contains(n) || n.startsWith("SHULKER_BOX");
     }
 
     private boolean isShopCatalogueItem(Material material) {
-        if (material == null || !material.isItem() || material.isAir() || isRestrictedShopItem(material)) return false;
-        if (material.isBlock()) return true;
-
-        // Keep useful resources, farming supplies and food. Gear, weapons, armour,
-        // potions and novelty items are intentionally not part of this shop.
-        return List.of(
-                "DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
-                "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
-                "REDSTONE", "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD",
-                "WHEAT", "WHEAT_SEEDS", "CARROT", "POTATO", "BEETROOT",
-                "BEETROOT_SEEDS", "MELON_SLICE", "MELON_SEEDS", "PUMPKIN_SEEDS",
-                "SUGAR_CANE", "BAMBOO", "COCOA_BEANS",
-                "APPLE", "BREAD", "COOKED_BEEF", "COOKED_PORKCHOP",
-                "COOKED_CHICKEN", "COOKED_MUTTON", "COOKED_RABBIT",
-                "BAKED_POTATO", "GOLDEN_CARROT"
-        ).contains(material.name());
+        // Include the complete obtainable survival item catalogue: blocks, resources,
+        // food, farming, brewing, tools, weapons, armour and utility items.
+        return material != null && material.isItem() && !material.isAir()
+                && !isRestrictedShopItem(material);
     }
 
     private double buyPrice(Material material) {
