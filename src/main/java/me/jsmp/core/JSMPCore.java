@@ -1051,7 +1051,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                     msg(player, "&cEnter a valid non-negative number. Price unchanged.");
                     if (material != null) openWorthAdminItem(player, material);
                 }
-            } else if(mode.startsWith("icon:"){
+            } else if(mode.startsWith("icon:")){
                 String id=mode.substring(5);
                 try { Material iconMaterial=Material.valueOf(input.toUpperCase(Locale.ROOT)); if(!iconMaterial.isItem())throw new IllegalArgumentException(); worth.set("categories."+id+".icon",iconMaterial.name());saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player); }
                 catch(IllegalArgumentException ex){msg(player,"&cInvalid item material. Try again from the category editor.");ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);}
