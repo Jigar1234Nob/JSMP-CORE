@@ -63,6 +63,10 @@ commands:
   jsmp:
     description: JSMPCore administration commands.
     usage: /jsmp reload
+  team:
+    aliases: [t]
+    description: Create and manage JSMP teams.
+    usage: /team
 
 permissions:
   jsmp.shop:
@@ -95,3 +99,5 @@ permissions:
     default: true
   jsmp.maintenance:
     default: op
+  jsmp.team:
+    default: true
