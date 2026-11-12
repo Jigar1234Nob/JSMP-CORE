@@ -894,6 +894,107 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         player.openInventory(inventory);
     }
 
+
+    private boolean canManageShop(Player player) { return player.isOp() || player.hasPermission("jsmp.shop.admin"); }
+
+    private void openShopAdmin(Player player) {
+        if (!canManageShop(player)) { msg(player, "&cYou do not have permission."); return; }
+        MenuHolder holder = new MenuHolder(MenuType.SHOP_ADMIN, null, 0);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Shop Editor - Categories"));
+        holder.inventory = inv;
+        List<ShopCategory> categories = getShopCategories();
+        int[] slots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
+        for (int i=0;i<categories.size() && i<slots.length;i++) {
+            ShopCategory c=categories.get(i);
+            long count=java.util.Arrays.stream(Material.values()).filter(m -> isShopCatalogueItem(m) && buyPrice(m)>0 && categoryFor(m).equals(c.id)).count();
+            inv.setItem(slots[i], icon(c.icon,"&6"+c.label,List.of("&7"+c.description,"&7Items: &f"+count,"&eClick to manage")));
+        }
+        inv.setItem(45,icon(Material.EMERALD,"&a+ Create category",List.of("&7Click, then type a name in chat")));
+        inv.setItem(49,icon(Material.BOOK,"&eOpen public shop",List.of()));
+        inv.setItem(53,icon(Material.BARRIER,"&cClose",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminCategory(Player player, ShopCategory category, int page) {
+        if (!canManageShop(player) || category==null || !worth.contains("categories."+category.id)) return;
+        List<Material> items=new ArrayList<>();
+        for(Material m:Material.values()) if(isShopCatalogueItem(m)&&buyPrice(m)>0&&categoryFor(m).equals(category.id)) items.add(m);
+        items.sort(Comparator.comparing(Material::name));
+        int max=Math.max(0,(items.size()-1)/45); page=Math.max(0,Math.min(page,max));
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_CATEGORY,category,page);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Edit "+category.label+" ("+(page+1)+"/"+(max+1)+")")); holder.inventory=inv;
+        int start=page*45;
+        for(int i=0;i<45&&start+i<items.size();i++){Material m=items.get(start+i);inv.setItem(i,icon(m,"&f"+m.name(),List.of("&7Buy: &e"+money(buyPrice(m)),"&7Sell: &a"+money(sellPrice(m)),"&eClick to edit")));}
+        inv.setItem(45,icon(Material.ARROW,"&eBack",List.of()));
+        inv.setItem(47,icon(Material.LIME_DYE,"&a+ Add items",List.of("&7Browse materials")));
+        inv.setItem(49,icon(Material.NAME_TAG,"&6Rename category",List.of("&7Enter a new name in chat")));
+        inv.setItem(51,icon(Material.BARRIER,"&cDelete category",List.of("&7Delete this category")));
+        inv.setItem(53,icon(Material.ARROW,"&eNext page",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminPicker(Player player, ShopCategory category, int page) {
+        if(!canManageShop(player)||category==null)return;
+        List<Material> items=new ArrayList<>();
+        for(Material m:Material.values()) if(isShopCatalogueItem(m) && (!worth.getBoolean("items."+m.name()+".sellable",false)||buyPrice(m)<=0||!categoryFor(m).equals(category.id))) items.add(m);
+        items.sort(Comparator.comparing(Material::name));
+        int max=Math.max(0,(items.size()-1)/45);page=Math.max(0,Math.min(page,max));
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_PICKER,category,page);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Add items to "+category.label));holder.inventory=inv;
+        int start=page*45;
+        for(int i=0;i<45&&start+i<items.size();i++){Material m=items.get(start+i);inv.setItem(i,icon(m,"&f"+m.name(),List.of("&eClick to add")));}
+        inv.setItem(45,icon(Material.ARROW,"&eBack",List.of()));inv.setItem(49,icon(Material.BARRIER,"&cCancel",List.of()));inv.setItem(53,icon(Material.ARROW,"&eNext page",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminItem(Player player, ShopCategory category, Material material) {
+        if(!canManageShop(player)||category==null||material==null)return;
+        String path="items."+material.name(); double buy=buyPrice(material),sell=sellPrice(material);
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_ITEM,category,0,material);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Edit "+material.name()));holder.inventory=inv;
+        inv.setItem(10,icon(Material.REDSTONE,"&cBuy -1",List.of("&7Current: "+money(buy),"&7Shift-click: -10")));
+        inv.setItem(11,icon(Material.EMERALD,"&aBuy +1",List.of("&7Current: "+money(buy),"&7Shift-click: +10")));
+        inv.setItem(13,icon(material,"&f"+material.name(),List.of("&7Buy: &e"+money(buy),"&7Sell: &a"+money(sell))));
+        inv.setItem(15,icon(Material.RED_DYE,"&cSell -1",List.of("&7Current: "+money(sell),"&7Shift-click: -10")));
+        inv.setItem(16,icon(Material.LIME_DYE,"&aSell +1",List.of("&7Current: "+money(sell),"&7Shift-click: +10")));
+        inv.setItem(29,icon(Material.CHEST,"&eMove category",List.of()));inv.setItem(31,icon(Material.BARRIER,"&cRemove from shop",List.of()));
+        inv.setItem(49,icon(Material.ARROW,"&eBack",List.of()));player.openInventory(inv);
+    }
+
+    private void openShopAdminMove(Player player, Material material) {
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_MOVE,null,0,material);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Move "+material.name()));holder.inventory=inv;
+        List<ShopCategory> cats=getShopCategories();int[] slots={10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34};
+        for(int i=0;i<cats.size()&&i<slots.length;i++)inv.setItem(slots[i],icon(cats.get(i).icon,"&6"+cats.get(i).label,List.of("&7Move item here")));
+        inv.setItem(49,icon(Material.ARROW,"&eCancel",List.of()));player.openInventory(inv);
+    }
+
+    private void beginShopAdminInput(Player player,String mode) {
+        pendingShopAdminInput.put(player.getUniqueId(),mode);player.closeInventory();
+        msg(player,"&eType the requested value in chat. Type &ccancel &eto abort.");
+    }
+
+    @EventHandler
+    public void onShopAdminChat(AsyncChatEvent event) {
+        UUID uuid=event.getPlayer().getUniqueId();String mode=pendingShopAdminInput.get(uuid);if(mode==null)return;
+        event.setCancelled(true);
+        String input=net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
+        Bukkit.getScheduler().runTask(this,()->{
+            Player player=Bukkit.getPlayer(uuid);if(player==null){pendingShopAdminInput.remove(uuid);return;}
+            if(!canManageShop(player)){pendingShopAdminInput.remove(uuid);return;}
+            if(input.equalsIgnoreCase("cancel")){pendingShopAdminInput.remove(uuid);openShopAdmin(player);return;}
+            if(mode.equals("new_category")){
+                String id=input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]","-");
+                if(id.isBlank()||worth.contains("categories."+id)){msg(player,"&cInvalid or duplicate category name.");openShopAdmin(player);}
+                else{worth.set("categories."+id+".label",input);worth.set("categories."+id+".icon","CHEST");worth.set("categories."+id+".description","Custom shop category");saveWorth();msg(player,"&aCategory created.");openShopAdmin(player);}
+            } else if(mode.startsWith("rename:")){
+                String id=mode.substring(7);
+                if(worth.contains("categories."+id)){worth.set("categories."+id+".label",input);saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player);}
+            }
+            pendingShopAdminInput.remove(uuid);
+        });
+    }
+
     private void openSell(Player player) {
         MenuHolder holder = new MenuHolder(MenuType.SELL, null, 0);
         Inventory inventory = Bukkit.createInventory(holder, 54, color(getConfig().getString("sell.title", "&8Sell Items")));
