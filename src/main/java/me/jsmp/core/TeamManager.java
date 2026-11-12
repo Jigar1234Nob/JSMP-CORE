@@ -39,6 +39,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     private final Map<UUID, String> membership = new HashMap<>();
     private final Map<UUID, Invite> invitations = new HashMap<>();
     private final Set<UUID> teamChat = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, String> cachedTeamNames = new ConcurrentHashMap<>();
 
     private static final class Team {
         private final String name;
@@ -152,15 +153,18 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     }
 
     private Component teamPrefix(UUID playerId) {
-        Team team = teamOf(playerId);
-        if (team == null) return Component.empty();
+        String name = cachedTeamNames.get(playerId);
+        if (name == null || name.isBlank()) return Component.empty();
         return Component.text("[")
                 .color(NamedTextColor.DARK_GRAY)
-                .append(Component.text(team.name).color(NamedTextColor.GOLD))
+                .append(Component.text(name).color(NamedTextColor.GOLD))
                 .append(Component.text("] ").color(NamedTextColor.DARK_GRAY));
     }
 
     private void updatePlayerDisplay(Player player) {
+        Team team = teamOf(player.getUniqueId());
+        if (team == null) cachedTeamNames.remove(player.getUniqueId());
+        else cachedTeamNames.put(player.getUniqueId(), team.name);
         player.playerListName(teamPrefix(player.getUniqueId()).append(Component.text(player.getName())));
     }
 
@@ -211,8 +215,12 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
         for (UUID member : new ArrayList<>(team.members)) {
             membership.remove(member);
             teamChat.remove(member);
+            cachedTeamNames.remove(member);
             Player online = Bukkit.getPlayer(member);
-            if (online != null) send(online, "&cYour team &f" + team.name + " &chas been disbanded.");
+            if (online != null) {
+                updatePlayerDisplay(online);
+                send(online, "&cYour team &f" + team.name + " &chas been disbanded.");
+            }
         }
         teams.remove(normalize(team.name));
         invitations.entrySet().removeIf(entry -> entry.getValue().teamKey().equals(normalize(team.name)));
