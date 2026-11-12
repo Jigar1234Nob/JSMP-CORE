@@ -405,9 +405,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 worth.set(path + ".buy-price", roundMoney(Math.max(0.01, buyPrice)));
                 changed = true;
             } else {
-                buyPrice = defaultWorth(material) <= 5.0
-                        ? lowValuePrice(material)
-                        : Math.max(minimumPrice, defaultWorth(material) * 1000.0);
+                buyPrice = Math.max(0.01, defaultWorth(material));
                 worth.set(path + ".buy-price", roundMoney(buyPrice));
                 changed = true;
             }
