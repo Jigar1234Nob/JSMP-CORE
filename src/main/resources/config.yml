@@ -28,6 +28,10 @@ economy:
   high-price-migration-v1: true
   low-value-price-migration-v2: true
   buy-sell-price-migration-v1: true
+  # One-time migration updates untouched generated prices using crafting recipes.
+  recipe-pricing-migration-v1: false
+  # Extra shop premium applied after calculating a crafted item's ingredient cost.
+  recipe-price-premium: 0.25
   baltop-size: 10
   minimum-payment: 0.01
 
@@ -159,3 +163,11 @@ daily:
     - material: NETHERITE_UPGRADE_SMITHING_TEMPLATE
       amount: 1
       name: Netherite upgrade template
+
+# Server list MOTD rotation. Use & colour codes.
+motd:
+  interval-seconds: 15
+  lines:
+    - "&6&lJSMP &8» &fSurvival, your way."
+    - "&eWelcome to &6&lJSMP &8| &fHave fun and play fair."
+    - "&bBuild. Trade. Survive. &8» &6JSMP"
