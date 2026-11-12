@@ -47,8 +47,9 @@ public final class AuctionHouse implements CommandExecutor, Listener {
     private final JSMPCore plugin;
     private final Connection database;
     private final Set<UUID> searching = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> pendingSell = ConcurrentHashMap.newKeySet();
 
-    private enum MenuType { BROWSE, MY_LISTINGS, CLAIMS, CONFIRM }
+    private enum MenuType { BROWSE, MY_LISTINGS, CLAIMS, CONFIRM, SELL }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -293,6 +294,33 @@ public final class AuctionHouse implements CommandExecutor, Listener {
         player.openInventory(inventory);
     }
 
+    private void openSellMenu(Player player) {
+        MenuHolder holder = new MenuHolder(MenuType.SELL, 0, "", "NEWEST", -1);
+        Inventory inventory = Bukkit.createInventory(holder, 27, color("&8JSMP &7» &fCreate Listing"));
+        holder.inventory = inventory;
+        fill(inventory);
+        ItemStack hand = player.getInventory().getItemInMainHand();
+        if (!hand.getType().isAir()) {
+            ItemStack preview = hand.clone();
+            ItemMeta meta = preview.getItemMeta();
+            List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+            lore.add("");
+            lore.add(color("&7This item will be listed."));
+            meta.setLore(lore);
+            preview.setItemMeta(meta);
+            inventory.setItem(13, preview);
+        } else {
+            inventory.setItem(13, button(Material.BARRIER, "&cNo item held",
+                    "&7Hold the item you want to sell"));
+        }
+        inventory.setItem(11, button(Material.LIME_CONCRETE, "&aSet price and list",
+                "&7You will enter the price in chat.",
+                "&7The item in your main hand will be listed."));
+        inventory.setItem(15, button(Material.RED_CONCRETE, "&cCancel",
+                "&7Return to the Auction House."));
+        player.openInventory(inventory);
+    }
+
     private void openConfirmation(Player player, Listing listing) {
         MenuHolder holder = new MenuHolder(MenuType.CONFIRM, 0, "", "NEWEST", listing.id());
         Inventory inventory = Bukkit.createInventory(holder, 27, color("&8JSMP &7» &fConfirm Purchase"));
@@ -306,6 +334,20 @@ public final class AuctionHouse implements CommandExecutor, Listener {
     }
 
     private void handleClick(Player player, MenuHolder holder, int slot, ItemStack clicked) {
+        if (holder.type == MenuType.SELL) {
+            if (slot == 11) {
+                if (player.getInventory().getItemInMainHand().getType().isAir()) {
+                    message(player, "&cHold an item in your main hand first.");
+                    return;
+                }
+                pendingSell.add(player.getUniqueId());
+                player.closeInventory();
+                message(player, "&fEnter the listing price in chat, or type &ccancel&f.");
+            } else if (slot == 15) {
+                openBrowse(player, 0, "", "NEWEST");
+            }
+            return;
+        }
         if (holder.type == MenuType.CONFIRM) {
             if (slot == 11) purchase(player, holder.listingId);
             else if (slot == 15) openBrowse(player, 0, "", "NEWEST");
@@ -323,10 +365,7 @@ public final class AuctionHouse implements CommandExecutor, Listener {
                     }
                     case 48 -> openMyListings(player, 0);
                     case 49 -> openClaims(player, 0);
-                    case 50 -> {
-                        player.closeInventory();
-                        message(player, "&7Hold an item and use &f/ah sell <price>&7.");
-                    }
+                    case 50 -> openSellMenu(player);
                     case 51 -> openBrowse(player, holder.page, holder.query, holder.sort);
                     case 53 -> openBrowse(player, holder.page + 1, holder.query, holder.sort);
                     default -> { }
@@ -649,17 +688,28 @@ public final class AuctionHouse implements CommandExecutor, Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onChatSearch(AsyncChatEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
-        if (!searching.remove(uuid)) return;
+        boolean sellPrice = pendingSell.remove(uuid);
+        boolean searchQuery = !sellPrice && searching.remove(uuid);
+        if (!sellPrice && !searchQuery) return;
         event.setCancelled(true);
-        String query = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
+        String input = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
         Bukkit.getScheduler().runTask(plugin, () -> {
             Player player = Bukkit.getPlayer(uuid);
             if (player == null) return;
-            if (query.equalsIgnoreCase("cancel") || query.isBlank()) {
-                message(player, "&7Search cancelled.");
+            if (input.equalsIgnoreCase("cancel") || input.isBlank()) {
+                message(player, "&7Action cancelled.");
                 openBrowse(player, 0, "", "NEWEST");
+                return;
+            }
+            if (sellPrice) {
+                try {
+                    createListing(player, Double.parseDouble(input));
+                } catch (NumberFormatException exception) {
+                    message(player, "&cInvalid price. Open the sell menu and try again.");
+                    openSellMenu(player);
+                }
             } else {
-                openBrowse(player, 0, query, "NEWEST");
+                openBrowse(player, 0, input, "NEWEST");
             }
         });
     }
