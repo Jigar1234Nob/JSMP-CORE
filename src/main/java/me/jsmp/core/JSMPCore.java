@@ -1882,7 +1882,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                         Material material = Material.valueOf(args[2].toUpperCase(Locale.ROOT));
                         String path = "items." + material.name();
                         if (args[1].equalsIgnoreCase("remove") && args.length == 3) {
-                            worth.set(path, null); saveWorth(); msg(sender, "&aRemoved " + material.name() + " from the shop."); return true;
+                            worth.set(path + ".buy-price", 0.0); worth.set(path + ".sell-price", 0.0); worth.set(path + ".sellable", false); worth.set(path + ".category", null); saveWorth(); msg(sender, "&aRemoved " + material.name() + " from the shop. It remains disabled in worth.yml so automatic catalogue generation will not re-add it."); return true;
                         }
                         if (args[1].equalsIgnoreCase("move") && args.length == 4) {
                             String category = args[3].toLowerCase(Locale.ROOT);
