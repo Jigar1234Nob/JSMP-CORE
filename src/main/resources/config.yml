@@ -69,100 +69,105 @@ maintenance:
 # Daily login rewards. Only time spent online outside /afk counts.
 # The reward calendar contains unique prizes for its 30-day cycle.
 daily:
+  # Only active, non-AFK playtime counts.
   base-play-minutes: 10
-  extra-minutes-per-streak-day: 5
-  maximum-play-minutes: 120
+  extra-minutes-per-streak-day: 0
+  maximum-play-minutes: 10
+
+  # This is a reward POOL, not a fixed calendar. Each player receives
+  # an independently shuffled 30-day calendar, saved in players.yml.
+  # Keep rewards modest. Avoid boss drops, end-game gear and progression skips.
   rewards:
     - material: BREAD
+      amount: 4
+      name: Bread
+    - material: COAL
       amount: 8
-      name: Bread bundle
+      name: Coal
+    - material: COBBLESTONE
+      amount: 32
+      name: Cobblestone
+    - material: OAK_LOG
+      amount: 8
+      name: Oak logs
+    - material: COOKED_BEEF
+      amount: 4
+      name: Cooked beef
+    - material: IRON_NUGGET
+      amount: 16
+      name: Iron nuggets
+    - material: TORCH
+      amount: 16
+      name: Torches
+    - material: ARROW
+      amount: 16
+      name: Arrows
+    - material: STRING
+      amount: 8
+      name: String
+    - material: LEATHER
+      amount: 4
+      name: Leather
     - material: IRON_INGOT
-      amount: 8
+      amount: 2
       name: Iron ingots
     - material: GOLD_INGOT
-      amount: 4
+      amount: 2
       name: Gold ingots
+    - material: LAPIS_LAZULI
+      amount: 8
+      name: Lapis lazuli
+    - material: REDSTONE
+      amount: 8
+      name: Redstone
+    - material: EXPERIENCE_BOTTLE
+      amount: 2
+      name: Bottles o' enchanting
+    - material: ENDER_PEARL
+      amount: 1
+      name: Ender pearl
+    - material: OBSIDIAN
+      amount: 4
+      name: Obsidian
+    - material: EMERALD
+      amount: 1
+      name: Emerald
     - material: DIAMOND
       amount: 1
       name: Diamond
-    - material: ENDER_PEARL
-      amount: 8
-      name: Ender pearls
-    - material: EXPERIENCE_BOTTLE
-      amount: 16
-      name: Bottles o' enchanting
     - material: GOLDEN_APPLE
-      amount: 2
-      name: Golden apples
-    - material: OBSIDIAN
-      amount: 16
-      name: Obsidian
-    - material: EMERALD
-      amount: 3
-      name: Emeralds
-    - material: DIAMOND_BLOCK
       amount: 1
-      name: Diamond block
+      name: Golden apple
     - material: NAME_TAG
+      amount: 1
+      name: Name tag
+    - material: SADDLE
+      amount: 1
+      name: Saddle
+    - material: BOOKSHELF
       amount: 2
-      name: Name tags
-    - material: ENCHANTED_BOOK
+      name: Bookshelves
+    - material: IRON_PICKAXE
       amount: 1
-      name: Enchanted book
-    - material: TOTEM_OF_UNDYING
+      name: Iron pickaxe
+    - material: SHIELD
       amount: 1
-      name: Totem of undying
-    - material: NETHERITE_INGOT
+      name: Shield
+    - material: BOW
       amount: 1
-      name: Netherite ingot
-    - material: SHULKER_BOX
+      name: Bow
+    - material: WATER_BUCKET
       amount: 1
-      name: Shulker box
-    - material: ELYTRA
-      amount: 1
-      name: Elytra
-    - material: BEACON
-      amount: 1
-      name: Beacon
-    - material: HEART_OF_THE_SEA
-      amount: 1
-      name: Heart of the sea
-    - material: TRIDENT
-      amount: 1
-      name: Trident
-    - material: NETHER_STAR
-      amount: 2
-      name: Nether stars
-    - material: ENCHANTED_GOLDEN_APPLE
-      amount: 1
-      name: Enchanted golden apple
-    - material: END_CRYSTAL
+      name: Water bucket
+    - material: COPPER_INGOT
       amount: 8
-      name: End crystals
-    - material: WITHER_SKELETON_SKULL
-      amount: 3
-      name: Wither skeleton skulls
-    - material: CONDUIT
-      amount: 1
-      name: Conduit
-    - material: NETHERITE_BLOCK
-      amount: 1
-      name: Netherite block
-    - material: DRAGON_HEAD
-      amount: 1
-      name: Dragon head
-    - material: DRAGON_EGG
-      amount: 1
-      name: Dragon egg
-    - material: MACE
-      amount: 1
-      name: Mace
-    - material: MUSIC_DISC_5
-      amount: 1
-      name: Music disc 5
-    - material: NETHERITE_UPGRADE_SMITHING_TEMPLATE
-      amount: 1
-      name: Netherite upgrade template
+      name: Copper ingots
+    - material: PRISMARINE_SHARD
+      amount: 4
+      name: Prismarine shards
+    - material: GLOWSTONE_DUST
+      amount: 4
+      name: Glowstone dust
 
 # Server list MOTD rotation. Use & colour codes.
 motd:
