@@ -64,6 +64,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -1015,6 +1016,30 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return getConfig().getMapList("daily.rewards");
     }
 
+    /*
+     * Every player gets their own shuffled copy of the configured reward pool.
+     * The calendar is persisted in players.yml, so reopening the menu, relogging,
+     * or restarting the server never rerolls a player's rewards.
+     */
+    private List<Map<?, ?>> dailyCalendar(UUID uuid) {
+        List<Map<?, ?>> pool = dailyRewards();
+        if (pool.isEmpty()) return pool;
+
+        String path = dailyPath(uuid);
+        int cycle = dailyStreak(uuid) / pool.size();
+        List<Map<?, ?>> saved = playerData.getMapList(path + ".calendar");
+        if (playerData.getInt(path + ".calendar-cycle", -1) == cycle && saved.size() == pool.size()) {
+            return saved;
+        }
+
+        List<Map<?, ?>> shuffled = new ArrayList<>(pool);
+        Collections.shuffle(shuffled);
+        playerData.set(path + ".calendar", shuffled);
+        playerData.set(path + ".calendar-cycle", cycle);
+        saveDailyData();
+        return shuffled;
+    }
+
     private Object dailyRewardValue(Map<?, ?> reward, String key, Object fallback) {
         Object value = reward.get(key);
         return value == null ? fallback : value;
@@ -1068,7 +1093,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private void openDaily(Player player) {
-        List<Map<?, ?>> rewards = dailyRewards();
+        List<Map<?, ?>> rewards = dailyCalendar(player.getUniqueId());
         if (rewards.isEmpty()) {
             msg(player, "&cDaily rewards are not configured.");
             return;
@@ -1135,7 +1160,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             msg(player, "&cPlay for another " + remaining / 60 + "m " + remaining % 60 + "s to unlock your daily reward.");
             return;
         }
-        List<Map<?, ?>> rewards = dailyRewards();
+        List<Map<?, ?>> rewards = dailyCalendar(uuid);
         if (rewards.isEmpty()) {
             msg(player, "&cDaily rewards are not configured.");
             return;
