@@ -926,6 +926,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         int start=page*45;
         for(int i=0;i<45&&start+i<items.size();i++){Material m=items.get(start+i);inv.setItem(i,icon(m,"&f"+m.name(),List.of("&7Buy: &e"+money(buyPrice(m)),"&7Sell: &a"+money(sellPrice(m)),"&eClick to edit")));}
         inv.setItem(45,icon(Material.ARROW,"&eBack",List.of()));
+        inv.setItem(46,icon(Material.ARROW,"&ePrevious page",List.of()));
         inv.setItem(47,icon(Material.LIME_DYE,"&a+ Add items",List.of("&7Browse materials")));
         inv.setItem(49,icon(Material.NAME_TAG,"&6Rename category",List.of("&7Enter a new name in chat")));
         inv.setItem(51,icon(Material.BARRIER,"&cDelete category",List.of("&7Delete this category")));
@@ -1821,6 +1822,70 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
 
         int raw = event.getRawSlot();
+
+        if (holder.type == MenuType.SHOP_ADMIN || holder.type == MenuType.SHOP_ADMIN_CATEGORY
+                || holder.type == MenuType.SHOP_ADMIN_PICKER || holder.type == MenuType.SHOP_ADMIN_ITEM
+                || holder.type == MenuType.SHOP_ADMIN_MOVE) {
+            event.setCancelled(true);
+            if (!canManageShop(player)) { player.closeInventory(); msg(player, "&cYour shop editor permission was removed."); return; }
+            if (holder.type == MenuType.SHOP_ADMIN) {
+                if (raw == 45) { beginShopAdminInput(player, "new_category"); return; }
+                if (raw == 49) { openCategories(player); return; }
+                if (raw == 53) { player.closeInventory(); return; }
+                int idx=categorySlotIndex(raw);List<ShopCategory> cats=getShopCategories();
+                if(idx>=0&&idx<cats.size())openShopAdminCategory(player,cats.get(idx),0);
+                return;
+            }
+            if (holder.type == MenuType.SHOP_ADMIN_CATEGORY) {
+                if(raw==45){openShopAdmin(player);return;}
+                if(raw==47){openShopAdminPicker(player,holder.category,0);return;}
+                if(raw==49){beginShopAdminInput(player,"rename:"+holder.category.id);return;}
+                if(raw==51){
+                    if(getShopCategories().size()<=1){msg(player,"&cKeep at least one category.");return;}
+                    worth.set("categories."+holder.category.id,null);
+                    ConfigurationSection section=worth.getConfigurationSection("items");
+                    if(section!=null)for(String key:section.getKeys(false))if(holder.category.id.equals(worth.getString("items."+key+".category")))worth.set("items."+key+".category",null);
+                    saveWorth();msg(player,"&aCategory deleted.");openShopAdmin(player);return;
+                }
+                if(raw==46){openShopAdminCategory(player,holder.category,holder.page-1);return;}
+                if(raw==53){openShopAdminCategory(player,holder.category,holder.page+1);return;}
+                if(raw>=0&&raw<45){ItemStack clicked=top.getItem(raw);if(clicked!=null&&!clicked.getType().isAir())openShopAdminItem(player,holder.category,clicked.getType());}
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_PICKER){
+                if(raw==45||raw==49){openShopAdminCategory(player,holder.category,0);return;}
+                if(raw==53){openShopAdminPicker(player,holder.category,holder.page+1);return;}
+                if(raw>=0&&raw<45){
+                    ItemStack clicked=top.getItem(raw);if(clicked==null||clicked.getType().isAir())return;
+                    Material material=clicked.getType();String path="items."+material.name();
+                    double base=Math.max(1.0,defaultWorth(material));
+                    worth.set(path+".buy-price",roundMoney(base));
+                    worth.set(path+".sell-price",roundMoney(base*getConfig().getDouble("economy.default-sell-rate",0.5)));
+                    worth.set(path+".sellable",true);worth.set(path+".category",holder.category.id);
+                    saveWorth();msg(player,"&aAdded "+material.name()+" to "+holder.category.label+".");openShopAdminCategory(player,holder.category,0);
+                }
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_ITEM){
+                Material material=holder.material;String path="items."+material.name();double step=event.isShiftClick()?10.0:1.0;
+                if(raw==49){openShopAdminCategory(player,holder.category,holder.page);return;}
+                if(raw==29){openShopAdminMove(player,material);return;}
+                if(raw==31){worth.set(path+".buy-price",0.0);worth.set(path+".sell-price",0.0);worth.set(path+".sellable",false);saveWorth();msg(player,"&aRemoved "+material.name()+" from the shop.");openShopAdminCategory(player,holder.category,0);return;}
+                if(raw==10||raw==11||raw==15||raw==16){
+                    String key=(raw==10||raw==11)?".buy-price":".sell-price";
+                    double next=worth.getDouble(path+key,0)+((raw==10||raw==15)?-step:step);
+                    worth.set(path+key,roundMoney(Math.max(0,next)));saveWorth();openShopAdminItem(player,holder.category,material);
+                }
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_MOVE){
+                if(raw==49){ShopCategory current=getShopCategories().stream().filter(c->c.id.equals(worth.getString("items."+holder.material.name()+".category"))).findFirst().orElse(null);if(current!=null)openShopAdminItem(player,current,holder.material);else openShopAdmin(player);return;}
+                int idx=categorySlotIndex(raw);List<ShopCategory> cats=getShopCategories();
+                if(idx>=0&&idx<cats.size()){worth.set("items."+holder.material.name()+".category",cats.get(idx).id);saveWorth();msg(player,"&aMoved "+holder.material.name()+" to "+cats.get(idx).label+".");openShopAdminCategory(player,cats.get(idx),0);}
+                return;
+            }
+        }
+
         if (holder.type == MenuType.CATEGORIES) {
             event.setCancelled(true);
             if (raw == 49) {
@@ -1911,7 +1976,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!(event.getWhoClicked() instanceof Player player)) return;
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof MenuHolder holder)) return;
-        if (holder.type == MenuType.DAILY) {
+        if (holder.type == MenuType.DAILY || holder.type == MenuType.SHOP_ADMIN || holder.type == MenuType.SHOP_ADMIN_CATEGORY
+                || holder.type == MenuType.SHOP_ADMIN_PICKER || holder.type == MenuType.SHOP_ADMIN_ITEM || holder.type == MenuType.SHOP_ADMIN_MOVE) {
             event.setCancelled(true);
             return;
         }
@@ -1949,6 +2015,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             case "shopadmin" -> {
                 if (!sender.hasPermission("jsmp.shop.admin")) { msg(sender, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
                 if (args.length == 0) {
+                    if (sender instanceof Player adminPlayer) { openShopAdmin(adminPlayer); return true; }
                     msg(sender, "&6Shop admin commands:");
                     msg(sender, "&e/shopadmin category add <id> <icon> <label> [description]");
                     msg(sender, "&e/shopadmin category remove <id>");
