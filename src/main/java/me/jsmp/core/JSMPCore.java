@@ -107,6 +107,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private AuctionHouse auctionHouse;
     private MotdManager motdManager;
     private final Map<Material, Double> recipePriceCache = new EnumMap<>(Material.class);
+    private final Map<UUID, String> pendingShopAdminInput = new HashMap<>();
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -119,18 +120,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
         private final ShopCategory category;
         private final int page;
+        private final Material material;
         private Inventory inventory;
 
-        private MenuHolder(MenuType type, ShopCategory category, int page) {
-            this.type = type;
-            this.category = category;
-            this.page = page;
+        private MenuHolder(MenuType type, ShopCategory category, int page) { this(type, category, page, null); }
+        private MenuHolder(MenuType type, ShopCategory category, int page, Material material) {
+            this.type = type; this.category = category; this.page = page; this.material = material;
         }
 
         @Override
@@ -1862,9 +1863,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                         String id = args[2].toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "");
                         if (id.isBlank() || worth.contains("categories." + id)) { msg(sender, "&cInvalid or existing category ID."); return true; }
                         Material icon = Material.valueOf(args.length >= 4 ? args[3].toUpperCase(Locale.ROOT) : "CHEST");
-                        String label = args.length >= 5 ? args[4].replace('_', ' ') : id;
+                        String categoryLabel = args.length >= 5 ? args[4].replace('_', ' ') : id;
                         String description = args.length >= 6 ? String.join(" ", java.util.Arrays.copyOfRange(args, 5, args.length)) : "Custom shop category";
-                        worth.set("categories." + id + ".label", label);
+                        worth.set("categories." + id + ".label", categoryLabel);
                         worth.set("categories." + id + ".icon", icon.name());
                         worth.set("categories." + id + ".description", description);
                         saveWorth(); msg(sender, "&aCreated shop category &f" + id + "&a."); return true;
