@@ -174,6 +174,11 @@ public final class AuctionHouse implements CommandExecutor, Listener {
             message(player, "&cPrice must be greater than zero and no more than 1 trillion.");
             return;
         }
+        price = Math.round(price * 100.0) / 100.0;
+        if (price <= 0) {
+            message(player, "&cThe minimum listing price is $0.01.");
+            return;
+        }
         ItemStack hand = player.getInventory().getItemInMainHand();
         if (hand.getType().isAir()) {
             message(player, "&cHold the item you want to list in your main hand.");
