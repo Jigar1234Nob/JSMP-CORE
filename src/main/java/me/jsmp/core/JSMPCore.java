@@ -604,8 +604,13 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
             double newBuy = roundMoney(defaultWorth(material));
             worth.set(path + ".buy-price", newBuy);
-            double oldSell = roundMoney(configuredBuy * sellRate);
-            if (Math.abs(worth.getDouble(path + ".sell-price", -1.0) - oldSell) <= 0.01) {
+            double configuredSell = worth.getDouble(path + ".sell-price", -1.0);
+            // Recognise untouched prices from the previous 50% sell-rate economy,
+            // as well as installations already using the new configured sell rate.
+            double previousDefaultSell = roundMoney(configuredBuy * 0.5);
+            double currentDefaultSell = roundMoney(configuredBuy * sellRate);
+            if (Math.abs(configuredSell - previousDefaultSell) <= 0.01
+                    || Math.abs(configuredSell - currentDefaultSell) <= 0.01) {
                 worth.set(path + ".sell-price", roundMoney(newBuy * sellRate));
             }
             if (untouchedLegacyPrice) worth.set(path + ".price", null);
