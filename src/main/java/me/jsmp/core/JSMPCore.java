@@ -139,24 +139,48 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum ShopCategory {
-        BLOCKS("Blocks", Material.BRICKS, "Building blocks"),
-        GEMS("Gems", Material.DIAMOND, "Valuable minerals and gems"),
-        FARMING("Farming", Material.WHEAT, "Crops, seeds and farming supplies"),
-        FOOD("Food", Material.COOKED_BEEF, "Edible items"),
-        NETHER("Nether", Material.NETHERRACK, "Nether blocks and materials"),
-        REDSTONE("Redstone Lab", Material.REDSTONE, "Redstone components and machines"),
-        WORKSTATIONS("Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations");
-
-        final String label;
+    private static final class ShopCategory {
+        static final ShopCategory BLOCKS = new ShopCategory("blocks", "Blocks", Material.BRICKS, "Building blocks");
+        static final ShopCategory GEMS = new ShopCategory("gems", "Gems", Material.DIAMOND, "Valuable minerals and gems");
+        static final ShopCategory FARMING = new ShopCategory("farming", "Farming", Material.WHEAT, "Crops, seeds and farming supplies");
+        static final ShopCategory FOOD = new ShopCategory("food", "Food", Material.COOKED_BEEF, "Edible items");
+        static final ShopCategory NETHER = new ShopCategory("nether", "Nether", Material.NETHERRACK, "Nether blocks and materials");
+        static final ShopCategory REDSTONE = new ShopCategory("redstone", "Redstone Lab", Material.REDSTONE, "Redstone components and machines");
+        static final ShopCategory WORKSTATIONS = new ShopCategory("workstations", "Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations");
+        final String id, label, description;
         final Material icon;
-        final String description;
-
-        ShopCategory(String label, Material icon, String description) {
-            this.label = label;
-            this.icon = icon;
-            this.description = description;
+        ShopCategory(String id, String label, Material icon, String description) {
+            this.id = id; this.label = label; this.icon = icon; this.description = description;
         }
+    }
+
+    private List<ShopCategory> getShopCategories() {
+        List<ShopCategory> result = new ArrayList<>();
+        ConfigurationSection section = worth.getConfigurationSection("categories");
+        if (section == null) return result;
+        for (String id : section.getKeys(false)) {
+            String base = "categories." + id;
+            Material icon;
+            try { icon = Material.valueOf(worth.getString(base + ".icon", "CHEST").toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ex) { icon = Material.CHEST; }
+            result.add(new ShopCategory(id, worth.getString(base + ".label", id), icon,
+                    worth.getString(base + ".description", "Shop items")));
+        }
+        return result;
+    }
+
+    private void ensureDefaultShopCategories() {
+        ShopCategory[] defaults = {ShopCategory.BLOCKS, ShopCategory.GEMS, ShopCategory.FARMING,
+                ShopCategory.FOOD, ShopCategory.NETHER, ShopCategory.REDSTONE, ShopCategory.WORKSTATIONS};
+        for (ShopCategory category : defaults) {
+            String path = "categories." + category.id;
+            if (!worth.contains(path)) {
+                worth.set(path + ".label", category.label);
+                worth.set(path + ".icon", category.icon.name());
+                worth.set(path + ".description", category.description);
+            }
+        }
+        saveWorth();
     }
 
     @Override
@@ -179,6 +203,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         worthLoreKey = new NamespacedKey(this, "worth_lore");
         loadBalances();
         loadHomes();
+        ensureDefaultShopCategories();
         generateWorthCatalogue();
         migrateRecipeWorthPrices();
         originalMotd = Bukkit.getMotd();
@@ -192,7 +217,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             new JSMPCoreExpansion(this).register();
             getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
         }
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
+        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily", "shopadmin")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
         try {
@@ -740,31 +765,33 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return item != null && !item.getType().isAir() && sellPrice(item.getType()) > 0;
     }
 
-    private ShopCategory categoryFor(Material material) {
+    private String categoryFor(Material material) {
+        String configured = worth.getString("items." + material.name() + ".category");
+        if (configured != null && worth.contains("categories." + configured)) return configured;
         String n = material.name();
         if (n.contains("REDSTONE") || List.of("REPEATER", "COMPARATOR", "PISTON", "STICKY_PISTON",
                 "OBSERVER", "HOPPER", "DISPENSER", "DROPPER", "TARGET", "LEVER", "TRIPWIRE_HOOK",
                 "DAYLIGHT_DETECTOR", "NOTE_BLOCK", "SCULK_SENSOR", "CALIBRATED_SCULK_SENSOR").contains(n)
-                || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE;
+                || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE.id;
         if (List.of("DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
                 "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
                 "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD").contains(n)
-                || n.contains("DIAMOND_ORE") || n.contains("EMERALD_ORE")) return ShopCategory.GEMS;
+                || n.contains("DIAMOND_ORE") || n.contains("EMERALD_ORE")) return ShopCategory.GEMS.id;
         if (n.contains("NETHER") || n.contains("CRIMSON") || n.contains("WARPED")
                 || n.contains("BASALT") || n.contains("BLACKSTONE") || n.contains("SOUL_")
-                || n.contains("GLOWSTONE") || n.contains("MAGMA")) return ShopCategory.NETHER;
+                || n.contains("GLOWSTONE") || n.contains("MAGMA")) return ShopCategory.NETHER.id;
         if (n.contains("SEEDS") || n.contains("SAPLING") || n.contains("WHEAT") || n.contains("CARROT")
                 || n.contains("POTATO") || n.contains("BEETROOT") || n.contains("MELON") || n.contains("PUMPKIN")
                 || n.contains("SUGAR_CANE") || n.contains("BAMBOO") || n.contains("COCOA")
                 || n.contains("COMPOST") || n.contains("BONE_MEAL") || n.contains("HAY_BLOCK")
                 || n.contains("MOSS") || n.contains("FLOWER") || n.contains("TULIP") || n.contains("LILY"))
-            return ShopCategory.FARMING;
-        if (material.isEdible()) return ShopCategory.FOOD;
+            return ShopCategory.FARMING.id;
+        if (material.isEdible()) return ShopCategory.FOOD.id;
         if (List.of("CRAFTING_TABLE", "FURNACE", "BLAST_FURNACE", "SMOKER", "ANVIL", "CHIPPED_ANVIL",
                 "DAMAGED_ANVIL", "ENCHANTING_TABLE", "BREWING_STAND", "SMITHING_TABLE", "GRINDSTONE",
                 "STONECUTTER", "CARTOGRAPHY_TABLE", "FLETCHING_TABLE", "LOOM", "LECTERN", "BARREL",
-                "COMPOSTER", "ENDER_CHEST").contains(n)) return ShopCategory.WORKSTATIONS;
-        return ShopCategory.BLOCKS;
+                "COMPOSTER", "ENDER_CHEST").contains(n)) return ShopCategory.WORKSTATIONS.id;
+        return ShopCategory.BLOCKS.id;
     }
 
     private ItemStack icon(Material material, String name, List<String> lore) {
@@ -814,7 +841,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         Inventory inventory = Bukkit.createInventory(holder, 54, color(getConfig().getString("shop.title", "&8JSMP Shop")));
         holder.inventory = inventory;
         int slot = 10;
-        for (ShopCategory category : ShopCategory.values()) {
+        for (ShopCategory category : getShopCategories()) {
             inventory.setItem(slot, icon(category.icon, "&6" + category.label,
                     List.of("&7" + category.description, "&eClick to browse")));
             slot++;
@@ -828,7 +855,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void openShopItems(Player player, ShopCategory category, int page) {
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
-            if (!isShopCatalogueItem(material) || categoryFor(material) != category) continue;
+            if (!isShopCatalogueItem(material) || !categoryFor(material).equals(category.id)) continue;
             if (buyPrice(material) <= 0) continue;
             items.add(material);
         }
@@ -1698,9 +1725,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 player.closeInventory();
                 return;
             }
-            ShopCategory[] categories = ShopCategory.values();
+            List<ShopCategory> categories = getShopCategories();
             int index = categorySlotIndex(raw);
-            if (index >= 0 && index < categories.length) openShopItems(player, categories[index], 0);
+            if (index >= 0 && index < categories.size()) openShopItems(player, categories.get(index), 0);
             return;
         }
 
@@ -1772,7 +1799,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private int categorySlotIndex(int raw) {
-        int[] slots = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21};
+        int[] slots = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34};
         for (int i = 0; i < slots.length; i++) if (slots[i] == raw) return i;
         return -1;
     }
@@ -1817,6 +1844,68 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String name = command.getName().toLowerCase(Locale.ROOT);
         switch (name) {
+            case "shopadmin" -> {
+                if (!sender.hasPermission("jsmp.shop.admin")) { msg(sender, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
+                if (args.length == 0) {
+                    msg(sender, "&6Shop admin commands:");
+                    msg(sender, "&e/shopadmin category add <id> <label> <icon> [description]");
+                    msg(sender, "&e/shopadmin category remove <id>");
+                    msg(sender, "&e/shopadmin item add <MATERIAL> <category> <buy> <sell>");
+                    msg(sender, "&e/shopadmin item remove <MATERIAL>");
+                    msg(sender, "&e/shopadmin item move <MATERIAL> <category>");
+                    msg(sender, "&e/shopadmin item price <MATERIAL> <buy> <sell>");
+                    msg(sender, "&7Category IDs: " + getShopCategories().stream().map(c -> c.id).collect(Collectors.joining(", ")));
+                    return true;
+                }
+                try {
+                    if (args.length >= 3 && args[0].equalsIgnoreCase("category") && args[1].equalsIgnoreCase("add")) {
+                        String id = args[2].toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "");
+                        if (id.isBlank() || worth.contains("categories." + id)) { msg(sender, "&cInvalid or existing category ID."); return true; }
+                        Material icon = Material.valueOf(args.length >= 4 ? args[3].toUpperCase(Locale.ROOT) : "CHEST");
+                        String label = args.length >= 5 ? args[4].replace('_', ' ') : id;
+                        String description = args.length >= 6 ? String.join(" ", java.util.Arrays.copyOfRange(args, 5, args.length)) : "Custom shop category";
+                        worth.set("categories." + id + ".label", label);
+                        worth.set("categories." + id + ".icon", icon.name());
+                        worth.set("categories." + id + ".description", description);
+                        saveWorth(); msg(sender, "&aCreated shop category &f" + id + "&a."); return true;
+                    }
+                    if (args.length == 3 && args[0].equalsIgnoreCase("category") && args[1].equalsIgnoreCase("remove")) {
+                        String id = args[2].toLowerCase(Locale.ROOT);
+                        if (!worth.contains("categories." + id)) { msg(sender, "&cCategory not found."); return true; }
+                        worth.set("categories." + id, null);
+                        ConfigurationSection items = worth.getConfigurationSection("items");
+                        if (items != null) for (String key : items.getKeys(false))
+                            if (id.equalsIgnoreCase(worth.getString("items." + key + ".category"))) worth.set("items." + key + ".category", null);
+                        saveWorth(); msg(sender, "&aRemoved category. Its items now use automatic categories."); return true;
+                    }
+                    if (args.length >= 3 && args[0].equalsIgnoreCase("item")) {
+                        Material material = Material.valueOf(args[2].toUpperCase(Locale.ROOT));
+                        String path = "items." + material.name();
+                        if (args[1].equalsIgnoreCase("remove") && args.length == 3) {
+                            worth.set(path, null); saveWorth(); msg(sender, "&aRemoved " + material.name() + " from the shop."); return true;
+                        }
+                        if (args[1].equalsIgnoreCase("move") && args.length == 4) {
+                            String category = args[3].toLowerCase(Locale.ROOT);
+                            if (!worth.contains("categories." + category)) { msg(sender, "&cUnknown category."); return true; }
+                            worth.set(path + ".category", category); saveWorth(); msg(sender, "&aMoved " + material.name() + " to " + category + "."); return true;
+                        }
+                        if ((args[1].equalsIgnoreCase("add") && args.length == 6) || (args[1].equalsIgnoreCase("price") && args.length == 5)) {
+                            String category = args[1].equalsIgnoreCase("add") ? args[3].toLowerCase(Locale.ROOT) : worth.getString(path + ".category", categoryFor(material));
+                            int offset = args[1].equalsIgnoreCase("add") ? 4 : 3;
+                            if (!worth.contains("categories." + category)) { msg(sender, "&cUnknown category."); return true; }
+                            double buy = Double.parseDouble(args[offset]), sell = Double.parseDouble(args[offset + 1]);
+                            if (!Double.isFinite(buy) || !Double.isFinite(sell) || buy <= 0 || sell < 0) { msg(sender, "&cBuy must be above 0 and sell cannot be negative."); return true; }
+                            worth.set(path + ".buy-price", roundMoney(buy)); worth.set(path + ".sell-price", roundMoney(sell));
+                            worth.set(path + ".sellable", true); worth.set(path + ".category", category);
+                            saveWorth(); msg(sender, "&aSaved " + material.name() + " in " + category + " (buy " + money(buy) + ", sell " + money(sell) + ")."); return true;
+                        }
+                    }
+                } catch (IllegalArgumentException ex) {
+                    msg(sender, "&cInvalid material, icon, or number. Use exact Bukkit material names.");
+                    return true;
+                }
+                msg(sender, "&cInvalid syntax. Use /shopadmin for help."); return true;
+            }
             case "shop" -> {
                 if (!sender.hasPermission("jsmp.shop")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open the shop."); return true; }
