@@ -439,7 +439,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onTeamChat(AsyncChatEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
-        if (teamOf(uuid) != null) {
+        if (cachedTeamNames.containsKey(uuid)) {
             Component prefix = teamPrefix(uuid);
             event.renderer((source, sourceDisplayName, message, viewer) ->
                     prefix.append(sourceDisplayName).append(Component.text(": ")).append(message));
