@@ -159,3 +159,11 @@ daily:
     - material: NETHERITE_UPGRADE_SMITHING_TEMPLATE
       amount: 1
       name: Netherite upgrade template
+
+# Server list MOTD rotation. Use & colour codes.
+motd:
+  interval-seconds: 15
+  lines:
+    - "&6&lJSMP &8» &fSurvival, your way."
+    - "&eWelcome to &6&lJSMP &8| &fHave fun and play fair."
+    - "&bBuild. Trade. Survive. &8» &6JSMP"
