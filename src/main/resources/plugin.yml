@@ -106,3 +106,5 @@ permissions:
     default: true
   jsmp.motd.admin:
     default: op
+  jsmp.daily.admin:
+    default: op
