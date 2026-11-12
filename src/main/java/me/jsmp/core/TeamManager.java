@@ -105,7 +105,7 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
             String normalizedKey = normalize(team.name);
             if (teams.containsKey(normalizedKey)) continue;
             teams.put(normalizedKey, team);
-            for (UUID member : team.members) {
+            for (UUID member : new ArrayList<>(team.members)) {
                 String existing = membership.putIfAbsent(member, normalizedKey);
                 if (existing != null) {
                     team.members.remove(member);
@@ -395,19 +395,19 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
     public void onTeamChat(AsyncChatEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
         if (!teamChat.contains(uuid)) return;
-        Team team = teamOf(uuid);
-        if (team == null) {
-            teamChat.remove(uuid);
-            return;
-        }
         event.setCancelled(true);
-        Component message = Component.text("[Team] " + event.getPlayer().getName() + ": ")
+        Component chatMessage = Component.text("[Team] " + event.getPlayer().getName() + ": ")
                 .append(event.message());
-        List<UUID> recipients = List.copyOf(team.members);
         Bukkit.getScheduler().runTask(plugin, () -> {
-            for (UUID member : recipients) {
+            if (!teamChat.contains(uuid)) return;
+            Team team = teamOf(uuid);
+            if (team == null) {
+                teamChat.remove(uuid);
+                return;
+            }
+            for (UUID member : new ArrayList<>(team.members)) {
                 Player online = Bukkit.getPlayer(member);
-                if (online != null) online.sendMessage(message);
+                if (online != null) online.sendMessage(chatMessage);
             }
         });
     }
