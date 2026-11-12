@@ -11,6 +11,9 @@ commands:
   shop:
     description: Opens the JSMP item shop.
     usage: /shop
+  worth:
+    description: Shows the buy and sell worth of the held item.
+    usage: /worth [admin]
   shopadmin:
     aliases: [shopedit]
     description: Opens the in-game shop editor.
