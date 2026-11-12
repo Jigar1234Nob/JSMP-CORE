@@ -1013,7 +1013,46 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private List<Map<?, ?>> dailyRewards() {
-        return getConfig().getMapList("daily.rewards");
+        List<Map<?, ?>> safe = new ArrayList<>();
+        for (Map<?, ?> configured : getConfig().getMapList("daily.rewards")) {
+            Material material = Material.matchMaterial(String.valueOf(dailyRewardValue(configured, "material", "")));
+            if (material == null || !isAllowedDailyMaterial(material)) continue;
+            int amount;
+            try { amount = Integer.parseInt(String.valueOf(dailyRewardValue(configured, "amount", 1))); }
+            catch (NumberFormatException exception) { amount = 1; }
+            amount = Math.max(1, Math.min(dailyMaximumAmount(material), amount));
+            Map<String, Object> reward = new LinkedHashMap<>();
+            reward.put("material", material.name());
+            reward.put("amount", amount);
+            reward.put("name", String.valueOf(dailyRewardValue(configured, "name", material.name().replace('_', ' '))));
+            safe.add(reward);
+        }
+        return safe;
+    }
+
+    private boolean isAllowedDailyMaterial(Material material) {
+        return switch (material) {
+            case BREAD, COAL, COBBLESTONE, OAK_LOG, COOKED_BEEF, IRON_NUGGET,
+                    TORCH, ARROW, STRING, LEATHER, IRON_INGOT, GOLD_INGOT,
+                    LAPIS_LAZULI, REDSTONE, EXPERIENCE_BOTTLE, ENDER_PEARL,
+                    OBSIDIAN, EMERALD, DIAMOND, GOLDEN_APPLE, NAME_TAG, SADDLE,
+                    BOOKSHELF, IRON_PICKAXE, SHIELD, BOW, WATER_BUCKET,
+                    COPPER_INGOT, PRISMARINE_SHARD, GLOWSTONE_DUST -> true;
+            default -> false;
+        };
+    }
+
+    private int dailyMaximumAmount(Material material) {
+        return switch (material) {
+            case BREAD, COAL, TORCH, ARROW, IRON_NUGGET, LAPIS_LAZULI,
+                    REDSTONE, COBBLESTONE -> 16;
+            case OAK_LOG, COOKED_BEEF, STRING, LEATHER, OBSIDIAN,
+                    BOOKSHELF, COPPER_INGOT, PRISMARINE_SHARD, GLOWSTONE_DUST -> 8;
+            case IRON_INGOT, GOLD_INGOT, EXPERIENCE_BOTTLE -> 4;
+            case ENDER_PEARL, EMERALD, DIAMOND, GOLDEN_APPLE, NAME_TAG,
+                    SADDLE, IRON_PICKAXE, SHIELD, BOW, WATER_BUCKET -> 1;
+            default -> 1;
+        };
     }
 
     /*
