@@ -6,6 +6,30 @@ JSMPCore exposes these PlaceholderAPI placeholders when PlaceholderAPI is instal
 - `%jsmp_team_tag%` - coloured `[TeamName]` tag, empty when the player has no team.
 - `%jsmp_team_prefix%` - coloured `[TeamName] ` prefix, empty when the player has no team.
 
-Use `%jsmp_team_prefix%` in the TAB plugin's existing tab-list name format and chat format to show the same team tag in both places. Keep the rest of your existing TAB formatting, rank prefixes, suffixes and colour codes intact; insert the team placeholder where you want the team tag to appear.
+## TAB player list
 
-JSMPCore also sets each player's Paper player-list name directly, so the tag is visible in the vanilla player list even without TAB. Normal Paper chat messages automatically show the team tag before the player's display name. The private `/team chat` mode continues to send messages only to online members of that player's team.
+The existing TAB config already has `tablist-name-formatting.enabled: true`. Keep that enabled.
+
+In `plugins/TAB/groups.yml`, append `%jsmp_team_tag% ` to each existing rank's `tabprefix` value. For example, if a rank currently has:
+
+```yaml
+owner:
+  tabprefix: "&c&lOWNER &r"
+```
+
+change only its prefix value to:
+
+```yaml
+owner:
+  tabprefix: "&c&lOWNER &r%jsmp_team_tag% "
+```
+
+Repeat for the existing rank groups without changing their rank colours, names, or permissions. Do not replace the rank prefix with the team placeholder.
+
+## Chat
+
+Normal Paper chat automatically shows the coloured team tag before the player's display name. The private `/team chat` mode remains private and only sends messages to online members of that player's team.
+
+If another chat-formatting plugin overrides Paper's chat renderer, add `%jsmp_team_tag%` to that plugin's existing chat format immediately before the player name.
+
+JSMPCore also sets the Paper player-list name directly, so the tag works in the vanilla player list. TAB's own `groups.yml` formatting is the recommended place to combine it with existing rank prefixes.
