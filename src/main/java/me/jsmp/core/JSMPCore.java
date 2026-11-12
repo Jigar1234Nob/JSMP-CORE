@@ -107,7 +107,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private AuctionHouse auctionHouse;
     private MotdManager motdManager;
     private final Map<Material, Double> recipePriceCache = new EnumMap<>(Material.class);
-    private final Map<UUID, String> pendingShopAdminInput = new HashMap<>();
+    private final Map<UUID, String> pendingShopAdminInput = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -841,13 +841,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         MenuHolder holder = new MenuHolder(MenuType.CATEGORIES, null, 0);
         Inventory inventory = Bukkit.createInventory(holder, 54, color(getConfig().getString("shop.title", "&8JSMP Shop")));
         holder.inventory = inventory;
-        int slot = 10;
-        for (ShopCategory category : getShopCategories()) {
-            inventory.setItem(slot, icon(category.icon, "&6" + category.label,
+        int[] categorySlots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
+        List<ShopCategory> shopCategories = getShopCategories();
+        for (int i=0;i<shopCategories.size() && i<categorySlots.length;i++) {
+            ShopCategory category=shopCategories.get(i);
+            inventory.setItem(categorySlots[i], icon(category.icon, "&6" + category.label,
                     List.of("&7" + category.description, "&eClick to browse")));
-            slot++;
-            if (slot == 17) slot = 19;
-            if (slot == 26) slot = 28;
         }
         inventory.setItem(49, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
         player.openInventory(inventory);
@@ -930,6 +929,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         inv.setItem(47,icon(Material.LIME_DYE,"&a+ Add items",List.of("&7Browse materials")));
         inv.setItem(49,icon(Material.NAME_TAG,"&6Rename category",List.of("&7Enter a new name in chat")));
         inv.setItem(51,icon(Material.BARRIER,"&cDelete category",List.of("&7Delete this category")));
+        inv.setItem(52,icon(Material.ITEM_FRAME,"&bChange category icon",List.of("&7Type a Bukkit material name in chat")));
         inv.setItem(53,icon(Material.ARROW,"&eNext page",List.of()));
         player.openInventory(inv);
     }
@@ -991,6 +991,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             } else if(mode.startsWith("rename:")){
                 String id=mode.substring(7);
                 if(worth.contains("categories."+id)){worth.set("categories."+id+".label",input);saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player);}
+            } else if(mode.startsWith("icon:")){
+                String id=mode.substring(5);
+                try { Material iconMaterial=Material.valueOf(input.toUpperCase(Locale.ROOT)); if(!iconMaterial.isItem())throw new IllegalArgumentException(); worth.set("categories."+id+".icon",iconMaterial.name());saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player); }
+                catch(IllegalArgumentException ex){msg(player,"&cInvalid item material. Try again from the category editor.");ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);}
             }
             pendingShopAdminInput.remove(uuid);
         });
@@ -1840,6 +1844,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 if(raw==45){openShopAdmin(player);return;}
                 if(raw==47){openShopAdminPicker(player,holder.category,0);return;}
                 if(raw==49){beginShopAdminInput(player,"rename:"+holder.category.id);return;}
+                if(raw==52){beginShopAdminInput(player,"icon:"+holder.category.id);return;}
                 if(raw==51){
                     if(getShopCategories().size()<=1){msg(player,"&cKeep at least one category.");return;}
                     worth.set("categories."+holder.category.id,null);
@@ -1966,7 +1971,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private int categorySlotIndex(int raw) {
-        int[] slots = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34};
+        int[] slots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
         for (int i = 0; i < slots.length; i++) if (slots[i] == raw) return i;
         return -1;
     }
