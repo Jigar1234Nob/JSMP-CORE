@@ -2,11 +2,11 @@ name: Build JSMPCore
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/team-motd-recipe-economy]
     paths-ignore:
       - 'JSMPCore.jar'
   pull_request:
-    branches: [main]
+    branches: [main, feature/rtp-countdown-homes-reload]
   workflow_dispatch:
 
 concurrency:
@@ -36,7 +36,7 @@ jobs:
       - name: Build plugin
         run: gradle clean build
       - name: Publish JAR to repository root
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           cp build/libs/*.jar JSMPCore.jar
           git config user.name "github-actions[bot]"
