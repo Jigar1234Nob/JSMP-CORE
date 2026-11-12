@@ -1122,15 +1122,6 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private String dailyTier(int day) {
-        if (day <= 5) return "&7COMMON";
-        if (day <= 10) return "&aUNCOMMON";
-        if (day <= 15) return "&9RARE";
-        if (day <= 20) return "&5EPIC";
-        if (day <= 25) return "&6LEGENDARY";
-        return "&cMYTHIC";
-    }
-
     private void openDailyEditor(Player player) {
         List<Map<?, ?>> rewards = dailyRewards();
         MenuHolder holder = new MenuHolder(MenuType.DAILY_EDIT, null, 0);
@@ -1237,7 +1228,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             int displayDay = i + 1;
             String rewardName = String.valueOf(dailyRewardValue(reward, "name", material.name().replace('_', ' ')));
             List<String> lore = new ArrayList<>();
-            lore.add("&7Tier: " + dailyTier(displayDay));
+            lore.add("&7Personalised reward");
             lore.add("&7Reward: &f" + rewardName + " x" + amount);
             if (i == rewardIndex) lore.add(claimed ? "&aClaimed today" : "&eYour next reward");
             else if (claimed && i == Math.min(streak, rewards.size() - 1)) lore.add("&eTomorrow's reward");
