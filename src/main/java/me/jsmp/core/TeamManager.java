@@ -159,6 +159,16 @@ public final class TeamManager implements Listener, CommandExecutor, TabComplete
         return team == null ? "" : "&8[&" + colorCode(team.color) + team.name + "&8] ";
     }
 
+    public String getTeamDescription(UUID playerId) {
+        Team team = teamOf(playerId);
+        return team == null ? "" : team.description;
+    }
+
+    public String getTeamColor(UUID playerId) {
+        Team team = teamOf(playerId);
+        return team == null ? "" : team.color.toLowerCase(Locale.ROOT);
+    }
+
     private String validTeamColor(String input) {
         String normalized = input == null ? "GOLD" : input.trim().toUpperCase(Locale.ROOT);
         try {
