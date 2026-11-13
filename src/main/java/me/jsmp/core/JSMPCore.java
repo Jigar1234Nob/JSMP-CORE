@@ -1116,8 +1116,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             Material material = materials.get(start + i), dummy = material;
             String path = "items." + material.name();
             boolean enabled = worth.getBoolean(path + ".sellable", false);
-            inv.setItem(i, icon(material, "&f" + pretty(dummy), List.of("&7Buy: &e" + money(worth.getDouble(path + ".buy-price", 0)),
-                    "&7Sell: &a" + money(worth.getDouble(path + ".sell-price", 0)), enabled ? "&aEnabled" : "&cDisabled", "&eClick to edit")));
+            inv.setItem(i, icon(material, "&f" + pretty(dummy), List.of("&7Buy: &e" + money(buyPrice(material)),
+                    "&7Sell: &a" + money(sellPrice(material)), enabled ? "&aEnabled" : "&cDisabled", "&eClick to edit")));
         }
         inv.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
         inv.setItem(49, icon(Material.BARRIER, "&cClose", List.of()));
@@ -1128,7 +1128,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void openWorthAdminItem(Player player, Material material) {
         if (!canManageShop(player) || material == null || !isShopCatalogueItem(material)) return;
         String path = "items." + material.name();
-        double buy = worth.getDouble(path + ".buy-price", 0), sell = worth.getDouble(path + ".sell-price", 0);
+        double buy = buyPrice(material), sell = sellPrice(material);
         boolean enabled = worth.getBoolean(path + ".sellable", false);
         MenuHolder holder = new MenuHolder(MenuType.WORTH_ADMIN_ITEM, null, 0, material);
         Inventory inv = Bukkit.createInventory(holder, 54, color("&8Worth: " + pretty(material)));
@@ -2047,11 +2047,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         int raw = event.getRawSlot();
 
         if (holder.type == MenuType.OFFLINE_PLAYER_DATA) {
-            if (event.getClickedInventory() == top) {
-                // The virtual chest is intentionally editable; all 54 slots belong to the saved snapshot.
-            } else if (event.isShiftClick()) {
-                event.setCancelled(true);
-            }
+            int editableSlots = holder.enderChest ? 27 : 41;
+            if (raw < 0 || raw >= editableSlots || event.getClickedInventory() != top) event.setCancelled(true);
             return;
         }
 
@@ -2274,8 +2271,9 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof MenuHolder holder)) return;
         if (holder.type == MenuType.OFFLINE_PLAYER_DATA) {
+            int editableSlots = holder.enderChest ? 27 : 41;
             for (int raw : event.getRawSlots()) {
-                if (raw >= top.getSize()) { event.setCancelled(true); return; }
+                if (raw < 0 || raw >= editableSlots) { event.setCancelled(true); return; }
             }
             return;
         }
