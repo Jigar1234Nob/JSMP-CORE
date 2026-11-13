@@ -21,6 +21,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -1388,10 +1389,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
 
     private void sendConfiguredResourcePack(Player player) {
-        String url = getConfig().getString("resource-pack", getConfig().getString("resource-pack.url", "")).trim();
-        if (url.isEmpty()) return;
-        if (!url.startsWith("https://") && !url.startsWith("http://")) {
-            getLogger().warning("resource-pack must be a direct HTTP(S) download URL. Resource pack was not sent.");
+        String url = getConfig().getString("resource-pack", "").trim();
+        if (url.isEmpty()) url = getConfig().getString("resource-pack.url", "").trim();
+        if (url.isEmpty()) {
+            getLogger().fine("No resource pack URL is configured; skipping delivery to " + player.getName() + ".");
+            return;
+        }
+        if ((!url.startsWith("https://") && !url.startsWith("http://"))
+                || !url.chars().allMatch(character -> character >= 0x21 && character <= 0x7e)) {
+            getLogger().warning("resource-pack must be a direct HTTP(S) URL containing only ASCII characters. Resource pack was not sent.");
             return;
         }
 
@@ -1415,16 +1421,38 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         Component prompt = promptText.isEmpty() ? null : Component.text(promptText);
         boolean required = getConfig().getBoolean("require-resource-pack", false);
 
+        getLogger().info("Queueing JSMP resource pack for " + player.getName()
+                + " (required=" + required + ", SHA-1 supplied=" + !sha1.isEmpty() + ").");
         Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (!player.isOnline()) return;
-            try {
-                player.setResourcePack(packId, url, sha1.isEmpty() ? null : sha1, prompt, required);
-                getLogger().info("Sent the configured resource pack to " + player.getName()
-                        + (required ? " (required)." : "."));
-            } catch (IllegalArgumentException exception) {
-                getLogger().warning("Could not send the resource pack to " + player.getName() + ": " + exception.getMessage());
+            if (!player.isOnline()) {
+                getLogger().fine("Skipped resource pack delivery because " + player.getName() + " disconnected.");
+                return;
             }
-        }, 20L);
+            try {
+                // Paper supports the UUID + URL + hexadecimal SHA-1 + Component + required overload.
+                player.setResourcePack(packId, url, sha1, prompt, required);
+                getLogger().info("Resource pack request sent to " + player.getName() + ".");
+            } catch (IllegalArgumentException exception) {
+                getLogger().severe("Could not send the JSMP resource pack to " + player.getName()
+                        + ": " + exception.getMessage());
+            } catch (Exception exception) {
+                getLogger().severe("Unexpected error sending the JSMP resource pack to " + player.getName()
+                        + ": " + exception.getMessage());
+            }
+        }, 40L);
+    }
+
+    @EventHandler
+    public void onResourcePackStatus(PlayerResourcePackStatusEvent event) {
+        String playerName = event.getPlayer().getName();
+        switch (event.getStatus()) {
+            case ACCEPTED -> getLogger().info(playerName + " accepted the JSMP resource pack.");
+            case DECLINED -> getLogger().warning(playerName + " declined the JSMP resource pack.");
+            case FAILED_DOWNLOAD -> getLogger().severe(playerName + " failed to download the JSMP resource pack. Check that the URL is a direct, publicly reachable ZIP download.");
+            case SUCCESSFULLY_LOADED -> getLogger().info(playerName + " successfully loaded the JSMP resource pack.");
+            case DOWNLOADED -> getLogger().info(playerName + " downloaded the JSMP resource pack; the client is applying it.");
+            default -> getLogger().info(playerName + " resource pack status: " + event.getStatus() + ".");
+        }
     }
 
     private String dailyPath(UUID uuid) {
@@ -2675,8 +2703,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
             case "jsmp" -> {
                 if (!sender.hasPermission("jsmp.admin")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("pack")) {
+                    if (!(sender instanceof Player player)) {
+                        msg(sender, "&cRun /jsmp pack in-game to resend the resource pack.");
+                        return true;
+                    }
+                    sendConfiguredResourcePack(player);
+                    msg(player, "&aQueued the JSMP resource pack. Check the server console for delivery status.");
+                    return true;
+                }
                 if (args.length != 1 || !args[0].equalsIgnoreCase("reload")) {
-                    msg(sender, "&cUsage: /jsmp reload");
+                    msg(sender, "&cUsage: /jsmp reload or /jsmp pack");
                     return true;
                 }
                 reloadConfig();
