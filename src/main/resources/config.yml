@@ -2,9 +2,9 @@
 # Use a direct HTTPS link to the .zip file, not a GitHub HTML page.
 # Leave url blank to disable automatic delivery.
 require-resource-pack: false
-resource-pack: ""
+resource-pack: "https://raw.githubusercontent.com/Jigar1234Nob/JSMP-CORE/feature/rtp-countdown-homes-reload/resource-pack/Official-JSMP-Resource-Pack-26.3.zip"
 resource-pack-id: ""
-resource-pack-prompt: ""
+resource-pack-prompt: "Download the official JSMP 26.3 resource pack?"
 resource-pack-sha1: ""
 
 currency:
@@ -39,7 +39,7 @@ economy:
   buy-sell-price-migration-v1: true
   # One-time migration updates untouched generated prices using crafting recipes.
   recipe-pricing-migration-v1: true
-  recipe-pricing-migration-v2: false
+  recipe-pricing-migration-v2: true
   # Extra shop premium applied after calculating a crafted item's ingredient cost.
   recipe-price-premium: 0.20
   baltop-size: 10
