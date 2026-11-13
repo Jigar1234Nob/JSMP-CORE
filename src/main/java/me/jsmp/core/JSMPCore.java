@@ -1388,7 +1388,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
 
     private void sendConfiguredResourcePack(Player player) {
-        String url = getConfig().getString("resource-pack", "").trim();
+        String url = getConfig().getString("resource-pack", getConfig().getString("resource-pack.url", "")).trim();
         if (url.isEmpty()) return;
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
             getLogger().warning("resource-pack must be a direct HTTP(S) download URL. Resource pack was not sent.");
