@@ -110,6 +110,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private final Map<UUID, String> pendingShopAdminInput = new java.util.concurrent.ConcurrentHashMap<>();
     private final Set<UUID> pendingShopSearchInput = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private NamespacedKey customItemKey;
+    private static final int[] CENTERED_SHOP_SLOTS = {10,11,12,13,14,19,20,21,22,23,28,29,30,31,32,37,38,39,40,41};
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -122,7 +123,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SHOP_SEARCH, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE, WORTH_ADMIN, WORTH_ADMIN_ITEM, OFFLINE_PLAYER_DATA }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SHOP_SEARCH, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE, SHOP_ADMIN_SEARCH, WORTH_ADMIN, WORTH_ADMIN_ITEM, OFFLINE_PLAYER_DATA }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
@@ -895,7 +896,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             items.add(material);
         }
         items.sort(Comparator.comparing(Material::name));
-        int pageSize = Math.max(9, Math.min(45, getConfig().getInt("shop.items-per-page", 45)));
+        int pageSize = Math.max(9, Math.min(20, getConfig().getInt("shop.items-per-page", 20)));
         int maxPage = Math.max(0, (items.size() - 1) / pageSize);
         page = Math.max(0, Math.min(page, maxPage));
 
@@ -919,7 +920,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 meta.setLore(lore);
                 stack.setItemMeta(meta);
             }
-            inventory.setItem(i, stack);
+            inventory.setItem(CENTERED_SHOP_SLOTS[i], stack);
         }
 
         inventory.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of("&7Go back one page")));
@@ -937,14 +938,14 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 .filter(m -> normalized.isBlank() || m.name().toLowerCase(Locale.ROOT).contains(normalized)
                         || pretty(m).toLowerCase(Locale.ROOT).contains(normalized))
                 .sorted(Comparator.comparing(Material::name)).toList();
-        int maxPage = Math.max(0, (items.size() - 1) / 45);
+        int maxPage = Math.max(0, (items.size() - 1) / CENTERED_SHOP_SLOTS.length);
         page = Math.max(0, Math.min(page, maxPage));
         MenuHolder holder = new MenuHolder(MenuType.SHOP_SEARCH, null, page, null, null, false, normalized);
         Inventory inventory = Bukkit.createInventory(holder, 54,
                 color("&8Search: " + (normalized.isBlank() ? "All items" : normalized) + " (" + (page + 1) + "/" + (maxPage + 1) + ")"));
         holder.inventory = inventory;
-        int start = page * 45;
-        for (int i = 0; i < 45 && start + i < items.size(); i++) {
+        int start = page * CENTERED_SHOP_SLOTS.length;
+        for (int i = 0; i < CENTERED_SHOP_SLOTS.length && start + i < items.size(); i++) {
             Material material = items.get(start + i);
             ItemStack stack = new ItemStack(material);
             ItemMeta meta = stack.getItemMeta();
@@ -955,7 +956,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                         color("&eClick to buy 1"), color("&7Shift-click to buy a stack")));
                 stack.setItemMeta(meta);
             }
-            inventory.setItem(i, stack);
+            inventory.setItem(CENTERED_SHOP_SLOTS[i], stack);
         }
         inventory.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
         inventory.setItem(46, icon(Material.COMPASS, "&eNew search", List.of("&7Type another item name")));
@@ -1041,6 +1042,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             inv.setItem(slots[i], icon(c.icon,"&6"+c.label,List.of("&7"+c.description,"&7Items: &f"+count,"&eClick to manage")));
         }
         inv.setItem(45,icon(Material.EMERALD,"&a+ Create category",List.of("&7Click, then type a name in chat")));
+        inv.setItem(46,icon(Material.COMPASS,"&eSearch items",List.of("&7Find any item to edit its price","&7or remove it from the shop")));
         inv.setItem(49,icon(Material.BOOK,"&eOpen public shop",List.of()));
         inv.setItem(53,icon(Material.BARRIER,"&cClose",List.of()));
         player.openInventory(inv);
@@ -1090,8 +1092,41 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         inv.setItem(13,icon(material,"&f"+material.name(),List.of("&7Buy: &e"+money(buy),"&7Sell: &a"+money(sell))));
         inv.setItem(15,icon(Material.RED_DYE,"&cSell -1",List.of("&7Current: "+money(sell),"&7Shift-click: -10")));
         inv.setItem(16,icon(Material.LIME_DYE,"&aSell +1",List.of("&7Current: "+money(sell),"&7Shift-click: +10")));
-        inv.setItem(29,icon(Material.CHEST,"&eMove category",List.of()));inv.setItem(31,icon(Material.BARRIER,"&cRemove from shop",List.of()));
+        inv.setItem(20,icon(Material.GOLD_INGOT,"&6Set buy price",List.of("&7Enter an exact amount in chat")));
+        inv.setItem(24,icon(Material.GOLD_NUGGET,"&6Set sell price",List.of("&7Enter an exact amount in chat")));
+        inv.setItem(29,icon(Material.CHEST,"&eMove category",List.of()));
+        inv.setItem(31,icon(Material.BARRIER,"&cRemove from shop",List.of()));
+        inv.setItem(33,icon(Material.COMPASS,"&eSearch another item",List.of()));
         inv.setItem(49,icon(Material.ARROW,"&eBack",List.of()));player.openInventory(inv);
+    }
+
+    private void openShopAdminSearch(Player player, String query, int page) {
+        if (!canManageShop(player)) return;
+        String normalized = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        List<Material> items = java.util.Arrays.stream(Material.values())
+                .filter(this::isShopCatalogueItem)
+                .filter(m -> normalized.isBlank() || m.name().toLowerCase(Locale.ROOT).contains(normalized)
+                        || pretty(m).toLowerCase(Locale.ROOT).contains(normalized))
+                .sorted(Comparator.comparing(Material::name)).toList();
+        int maxPage = Math.max(0, (items.size() - 1) / 45);
+        page = Math.max(0, Math.min(page, maxPage));
+        MenuHolder holder = new MenuHolder(MenuType.SHOP_ADMIN_SEARCH, null, page, null, null, false, normalized);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Item editor search (" + (page + 1) + "/" + (maxPage + 1) + ")"));
+        holder.inventory = inv;
+        int start = page * 45;
+        for (int i = 0; i < 45 && start + i < items.size(); i++) {
+            Material material = items.get(start + i);
+            String path = "items." + material.name();
+            boolean enabled = worth.getBoolean(path + ".sellable", false) && buyPrice(material) > 0;
+            inv.setItem(i, icon(material, "&f" + pretty(material),
+                    List.of("&7Buy: &e" + money(buyPrice(material)), "&7Sell: &a" + money(sellPrice(material)),
+                            enabled ? "&aIn shop" : "&cNot in shop", "&eClick to edit")));
+        }
+        inv.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
+        inv.setItem(46, icon(Material.COMPASS, "&eNew search", List.of("&7Type another item name")));
+        inv.setItem(49, icon(Material.BARRIER, "&cClose", List.of()));
+        inv.setItem(53, icon(Material.ARROW, "&eNext page", List.of()));
+        player.openInventory(inv);
     }
 
     private void openShopAdminMove(Player player, Material material) {
@@ -1174,6 +1209,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             Player player=Bukkit.getPlayer(uuid);if(player==null){pendingShopAdminInput.remove(uuid);return;}
             if(!canManageShop(player)){pendingShopAdminInput.remove(uuid);return;}
             if(input.equalsIgnoreCase("cancel")){pendingShopAdminInput.remove(uuid);openShopAdmin(player);return;}
+            if (mode.equals("admin-search")) {
+                pendingShopAdminInput.remove(uuid);
+                openShopAdminSearch(player, input, 0);
+                return;
+            }
             if(mode.equals("new_category")){
                 String id=input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]","-");
                 if(id.isBlank()||worth.contains("categories."+id)){msg(player,"&cInvalid or duplicate category name.");openShopAdmin(player);}
@@ -1181,9 +1221,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             } else if(mode.startsWith("rename:")){
                 String id=mode.substring(7);
                 if(worth.contains("categories."+id)){worth.set("categories."+id+".label",input);saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player);}
-            } else if (mode.startsWith("worth-buy:") || mode.startsWith("worth-sell:")) {
-                boolean buyField = mode.startsWith("worth-buy:");
-                String materialName = mode.substring(buyField ? 10 : 11);
+            } else if (mode.startsWith("worth-buy:") || mode.startsWith("worth-sell:")
+                    || mode.startsWith("shop-buy:") || mode.startsWith("shop-sell:")) {
+                boolean buyField = mode.startsWith("worth-buy:") || mode.startsWith("shop-buy:");
+                boolean shopEditor = mode.startsWith("shop-");
+                String materialName = mode.substring(mode.indexOf(':') + 1);
                 Material material = Material.matchMaterial(materialName);
                 try {
                     double value = Double.parseDouble(input);
@@ -1193,10 +1235,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                     if (value > 0 || worth.getDouble(path + (buyField ? ".sell-price" : ".buy-price"), 0) > 0) worth.set(path + ".sellable", true);
                     saveWorth();
                     msg(player, "&aUpdated " + pretty(material) + " " + (buyField ? "buy" : "sell") + " price to " + money(value) + ".");
-                    openWorthAdminItem(player, material);
+                    if (shopEditor) {
+                        ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                        if (category != null) openShopAdminItem(player, category, material);
+                    } else openWorthAdminItem(player, material);
                 } catch (IllegalArgumentException ex) {
                     msg(player, "&cEnter a valid non-negative number. Price unchanged.");
-                    if (material != null) openWorthAdminItem(player, material);
+                    if (material != null) {
+                        if (shopEditor) {
+                            ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                            if (category != null) openShopAdminItem(player, category, material);
+                        } else openWorthAdminItem(player, material);
+                    }
                 }
             } else if(mode.startsWith("icon:")){
                 String id=mode.substring(5);
@@ -2137,6 +2187,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             if (!canManageShop(player)) { player.closeInventory(); msg(player, "&cYour shop editor permission was removed."); return; }
             if (holder.type == MenuType.SHOP_ADMIN) {
                 if (raw == 45) { beginShopAdminInput(player, "new_category"); return; }
+                if (raw == 46) {
+                    pendingShopAdminInput.put(player.getUniqueId(), "admin-search");
+                    player.closeInventory();
+                    msg(player, "&eType an item name to search, or type &ccancel&e.");
+                    return;
+                }
                 if (raw == 49) { openCategories(player); return; }
                 if (raw == 53) { player.closeInventory(); return; }
                 int idx=categorySlotIndex(raw);List<ShopCategory> cats=getShopCategories();
@@ -2174,9 +2230,31 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 }
                 return;
             }
+            if (holder.type == MenuType.SHOP_ADMIN_SEARCH) {
+                if (raw == 45) { openShopAdminSearch(player, holder.searchQuery, holder.page - 1); return; }
+                if (raw == 53) { openShopAdminSearch(player, holder.searchQuery, holder.page + 1); return; }
+                if (raw == 46) {
+                    pendingShopAdminInput.put(player.getUniqueId(), "admin-search");
+                    player.closeInventory();
+                    msg(player, "&eType an item name to search, or type &ccancel&e.");
+                    return;
+                }
+                if (raw == 49) { openShopAdmin(player); return; }
+                if (raw >= 0 && raw < 45) {
+                    ItemStack clicked = top.getItem(raw);
+                    if (clicked != null && !clicked.getType().isAir()) {
+                        Material material = clicked.getType();
+                        ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                        if (category != null) openShopAdminItem(player, category, material);
+                    }
+                }
+                return;
+            }
             if(holder.type==MenuType.SHOP_ADMIN_ITEM){
                 Material material=holder.material;String path="items."+material.name();double step=event.isShiftClick()?10.0:1.0;
                 if(raw==49){openShopAdminCategory(player,holder.category,holder.page);return;}
+                if(raw==20 || raw==24){beginShopAdminInput(player,(raw==20?"shop-buy:":"shop-sell:")+material.name());msg(player,"&eEnter the new "+(raw==20?"buy":"sell")+" price for "+pretty(material)+".");return;}
+                if(raw==33){pendingShopAdminInput.put(player.getUniqueId(),"admin-search");player.closeInventory();msg(player,"&eType an item name to search, or type &ccancel&e.");return;}
                 if(raw==29){openShopAdminMove(player,material);return;}
                 if(raw==31){worth.set(path+".buy-price",0.0);worth.set(path+".sell-price",0.0);worth.set(path+".sellable",false);saveWorth();msg(player,"&aRemoved "+material.name()+" from the shop.");openShopAdminCategory(player,holder.category,0);return;}
                 if(raw==10||raw==11||raw==15||raw==16){
