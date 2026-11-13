@@ -1389,15 +1389,29 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
 
     private void sendConfiguredResourcePack(Player player) {
-        String url = getConfig().getString("resource-pack", "").trim();
-        if (url.isEmpty()) url = getConfig().getString("resource-pack.url", "").trim();
+        // Accept both the original scalar setting and the newer nested resource-pack section.
+        boolean nestedPackConfig = getConfig().isConfigurationSection("resource-pack");
+        String url = nestedPackConfig
+                ? getConfig().getString("resource-pack.url", "").trim()
+                : getConfig().getString("resource-pack", "").trim();
+
         if (url.isEmpty()) {
             getLogger().fine("No resource pack URL is configured; skipping delivery to " + player.getName() + ".");
             return;
         }
-        if ((!url.startsWith("https://") && !url.startsWith("http://"))
-                || !url.chars().allMatch(character -> character >= 0x21 && character <= 0x7e)) {
-            getLogger().warning("resource-pack must be a direct HTTP(S) URL containing only ASCII characters. Resource pack was not sent.");
+
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            String scheme = uri.getScheme();
+            if (scheme == null
+                    || !(scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("http"))
+                    || uri.getHost() == null
+                    || uri.getRawUserInfo() != null
+                    || !url.chars().allMatch(character -> character >= 0x21 && character <= 0x7e)) {
+                throw new IllegalArgumentException("URL must be a direct ASCII HTTP(S) URL with a valid host.");
+            }
+        } catch (IllegalArgumentException exception) {
+            getLogger().warning("Invalid resource-pack URL: " + exception.getMessage() + " Resource pack was not sent.");
             return;
         }
 
@@ -1412,18 +1426,26 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             return;
         }
 
-        String sha1 = getConfig().getString("resource-pack-sha1", "").trim().toLowerCase(Locale.ROOT);
+        String sha1 = (nestedPackConfig
+                ? getConfig().getString("resource-pack.sha1", "")
+                : getConfig().getString("resource-pack-sha1", "")).trim().toLowerCase(Locale.ROOT);
         if (!sha1.isEmpty() && !sha1.matches("[0-9a-f]{40}")) {
-            getLogger().warning("resource-pack-sha1 must be exactly 40 hexadecimal characters (SHA-1). Resource pack was not sent.");
+            getLogger().warning("Resource-pack SHA-1 must be exactly 40 hexadecimal characters. Resource pack was not sent.");
             return;
         }
-        String promptText = getConfig().getString("resource-pack-prompt", "").trim();
+        String promptText = (nestedPackConfig
+                ? getConfig().getString("resource-pack.prompt", "")
+                : getConfig().getString("resource-pack-prompt", "")).trim();
         Component prompt = promptText.isEmpty() ? null : Component.text(promptText);
-        boolean required = getConfig().getBoolean("require-resource-pack", false);
+        boolean required = nestedPackConfig
+                ? getConfig().getBoolean("resource-pack.required", false)
+                : getConfig().getBoolean("require-resource-pack", false);
+        long delayTicks = Math.max(1L, nestedPackConfig
+                ? getConfig().getLong("resource-pack.join-delay-ticks", 40L)
+                : getConfig().getLong("resource-pack-delay-ticks", 40L));
 
         getLogger().info("Queueing JSMP resource pack for " + player.getName()
                 + " (required=" + required + ", SHA-1 supplied=" + !sha1.isEmpty() + ").");
-        // url was normalized above, so capture an immutable copy for the scheduled task.
         final String packUrl = url;
         Bukkit.getScheduler().runTaskLater(this, () -> {
             if (!player.isOnline()) {
@@ -1431,7 +1453,6 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 return;
             }
             try {
-                // Paper supports the UUID + URL + hexadecimal SHA-1 + Component + required overload.
                 player.setResourcePack(packId, packUrl, sha1, prompt, required);
                 getLogger().info("Resource pack request sent to " + player.getName() + ".");
             } catch (IllegalArgumentException exception) {
@@ -1441,7 +1462,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 getLogger().severe("Unexpected error sending the JSMP resource pack to " + player.getName()
                         + ": " + exception.getMessage());
             }
-        }, 40L);
+        }, delayTicks);
     }
 
     @EventHandler
