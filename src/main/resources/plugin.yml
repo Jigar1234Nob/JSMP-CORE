@@ -23,11 +23,11 @@ commands:
     description: Opens your ender chest.
     usage: /ec
   invsee:
-    description: Opens an online player's inventory for inspection and editing.
+    description: Opens an online or saved offline player's inventory for inspection and editing.
     usage: /invsee <player>
   ecsee:
     aliases: [enderchestsee]
-    description: Opens an online player's ender chest for inspection and editing.
+    description: Opens an online or saved offline player's ender chest for inspection and editing.
     usage: /ecsee <player>
   sell:
     description: Opens the item selling GUI.
@@ -76,8 +76,11 @@ commands:
     description: Saves a named home.
     usage: /sethome <name>
   home:
-    description: Teleports to a saved home.
-    usage: /home <name>
+    description: Teleports to your home or an authorised player's home.
+    usage: /home <name> [player] <home>
+  jsmpitem:
+    description: Gives a custom DDR RAM item for resource-pack testing.
+    usage: /jsmpitem <ddr3|ddr4|ddr5> [amount]
   jsmp:
     description: JSMPCore administration commands.
     usage: /jsmp reload
@@ -97,6 +100,8 @@ permissions:
   jsmp.enderchest:
     default: true
   jsmp.invsee:
+    default: op
+  jsmp.home.admin:
     default: op
   jsmp.auctionhouse:
     default: true
