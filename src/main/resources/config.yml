@@ -35,6 +35,10 @@ economy:
   recipe-price-premium: 0.20
   baltop-size: 10
   minimum-payment: 0.01
+  # Each net item bought adds this much to the market price multiplier.
+  # Selling items reduces demand again, but prices never fall below worth.yml base prices.
+  market-price-step: 0.02
+  market-max-multiplier: 3.0
 
 messages:
   prefix: "&8[&6JSMP&8] &r"
