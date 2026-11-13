@@ -1423,6 +1423,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
         getLogger().info("Queueing JSMP resource pack for " + player.getName()
                 + " (required=" + required + ", SHA-1 supplied=" + !sha1.isEmpty() + ").");
+        // url was normalized above, so capture an immutable copy for the scheduled task.
+        final String packUrl = url;
         Bukkit.getScheduler().runTaskLater(this, () -> {
             if (!player.isOnline()) {
                 getLogger().fine("Skipped resource pack delivery because " + player.getName() + " disconnected.");
@@ -1430,7 +1432,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
             try {
                 // Paper supports the UUID + URL + hexadecimal SHA-1 + Component + required overload.
-                player.setResourcePack(packId, url, sha1, prompt, required);
+                player.setResourcePack(packId, packUrl, sha1, prompt, required);
                 getLogger().info("Resource pack request sent to " + player.getName() + ".");
             } catch (IllegalArgumentException exception) {
                 getLogger().severe("Could not send the JSMP resource pack to " + player.getName()
