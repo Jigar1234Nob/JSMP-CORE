@@ -21,6 +21,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -107,6 +108,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private AuctionHouse auctionHouse;
     private MotdManager motdManager;
     private final Map<Material, Double> recipePriceCache = new EnumMap<>(Material.class);
+    private final Map<UUID, String> pendingShopAdminInput = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Set<UUID> pendingShopSearchInput = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private NamespacedKey customItemKey;
+    private static final int[] CENTERED_SHOP_SLOTS = {10,11,12,13,14,19,20,21,22,23,28,29,30,31,32,37,38,39,40,41};
 
     private static final class AfkSession {
         private final BossBar bossBar;
@@ -119,18 +124,26 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum MenuType { CATEGORIES, SHOP_ITEMS, SELL, DAILY, DAILY_EDIT }
+    private enum MenuType { CATEGORIES, SHOP_ITEMS, SHOP_SEARCH, SELL, DAILY, DAILY_EDIT, SHOP_ADMIN, SHOP_ADMIN_CATEGORY, SHOP_ADMIN_PICKER, SHOP_ADMIN_ITEM, SHOP_ADMIN_MOVE, SHOP_ADMIN_SEARCH, WORTH_ADMIN, WORTH_ADMIN_ITEM, OFFLINE_PLAYER_DATA }
 
     private static final class MenuHolder implements InventoryHolder {
         private final MenuType type;
         private final ShopCategory category;
         private final int page;
+        private final Material material;
+        private final UUID targetUuid;
+        private final boolean enderChest;
+        private final String searchQuery;
         private Inventory inventory;
 
-        private MenuHolder(MenuType type, ShopCategory category, int page) {
-            this.type = type;
-            this.category = category;
-            this.page = page;
+        private MenuHolder(MenuType type, ShopCategory category, int page) { this(type, category, page, null); }
+        private MenuHolder(MenuType type, ShopCategory category, int page, Material material) {
+            this(type, category, page, material, null, false, "");
+        }
+        private MenuHolder(MenuType type, ShopCategory category, int page, Material material,
+                           UUID targetUuid, boolean enderChest, String searchQuery) {
+            this.type = type; this.category = category; this.page = page; this.material = material;
+            this.targetUuid = targetUuid; this.enderChest = enderChest; this.searchQuery = searchQuery;
         }
 
         @Override
@@ -139,24 +152,49 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
     }
 
-    private enum ShopCategory {
-        BLOCKS("Blocks", Material.BRICKS, "Building blocks"),
-        GEMS("Gems", Material.DIAMOND, "Valuable minerals and gems"),
-        FARMING("Farming", Material.WHEAT, "Crops, seeds and farming supplies"),
-        FOOD("Food", Material.COOKED_BEEF, "Edible items"),
-        NETHER("Nether", Material.NETHERRACK, "Nether blocks and materials"),
-        REDSTONE("Redstone Lab", Material.REDSTONE, "Redstone components and machines"),
-        WORKSTATIONS("Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations");
-
-        final String label;
+    private static final class ShopCategory {
+        static final ShopCategory BLOCKS = new ShopCategory("blocks", "Blocks", Material.BRICKS, "Building blocks");
+        static final ShopCategory GEMS = new ShopCategory("gems", "Gems", Material.DIAMOND, "Valuable minerals and gems");
+        static final ShopCategory FARMING = new ShopCategory("farming", "Farming", Material.WHEAT, "Crops, seeds and farming supplies");
+        static final ShopCategory FOOD = new ShopCategory("food", "Food", Material.COOKED_BEEF, "Edible items");
+        static final ShopCategory NETHER = new ShopCategory("nether", "Nether", Material.NETHERRACK, "Nether blocks and materials");
+        static final ShopCategory REDSTONE = new ShopCategory("redstone", "Redstone Lab", Material.REDSTONE, "Redstone components and machines");
+        static final ShopCategory WORKSTATIONS = new ShopCategory("workstations", "Workstations", Material.CRAFTING_TABLE, "Crafting and utility stations");
+        static final ShopCategory MISC = new ShopCategory("misc", "Misc", Material.CHEST, "Other items and useful odds and ends");
+        final String id, label, description;
         final Material icon;
-        final String description;
-
-        ShopCategory(String label, Material icon, String description) {
-            this.label = label;
-            this.icon = icon;
-            this.description = description;
+        ShopCategory(String id, String label, Material icon, String description) {
+            this.id = id; this.label = label; this.icon = icon; this.description = description;
         }
+    }
+
+    private List<ShopCategory> getShopCategories() {
+        List<ShopCategory> result = new ArrayList<>();
+        ConfigurationSection section = worth.getConfigurationSection("categories");
+        if (section == null) return result;
+        for (String id : section.getKeys(false)) {
+            String base = "categories." + id;
+            Material icon;
+            try { icon = Material.valueOf(worth.getString(base + ".icon", "CHEST").toUpperCase(Locale.ROOT)); }
+            catch (IllegalArgumentException ex) { icon = Material.CHEST; }
+            result.add(new ShopCategory(id, worth.getString(base + ".label", id), icon,
+                    worth.getString(base + ".description", "Shop items")));
+        }
+        return result;
+    }
+
+    private void ensureDefaultShopCategories() {
+        ShopCategory[] defaults = {ShopCategory.BLOCKS, ShopCategory.GEMS, ShopCategory.FARMING,
+                ShopCategory.FOOD, ShopCategory.NETHER, ShopCategory.REDSTONE, ShopCategory.WORKSTATIONS, ShopCategory.MISC};
+        for (ShopCategory category : defaults) {
+            String path = "categories." + category.id;
+            if (!worth.contains(path)) {
+                worth.set(path + ".label", category.label);
+                worth.set(path + ".icon", category.icon.name());
+                worth.set(path + ".description", category.description);
+            }
+        }
+        saveWorth();
     }
 
     @Override
@@ -177,8 +215,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         openEconomyDatabase();
         if (economyDatabase == null) return;
         worthLoreKey = new NamespacedKey(this, "worth_lore");
+        customItemKey = new NamespacedKey(this, "custom_item");
         loadBalances();
         loadHomes();
+        ensureDefaultShopCategories();
         generateWorthCatalogue();
         migrateRecipeWorthPrices();
         originalMotd = Bukkit.getMotd();
@@ -192,7 +232,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             new JSMPCoreExpansion(this).register();
             getLogger().info("Registered PlaceholderAPI expansion: %jsmp_balance%.");
         }
-        for (String command : List.of("shop", "sell", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily")) {
+        for (String command : List.of("shop", "sell", "worth", "balance", "baltop", "pay", "money", "vanish", "god", "ungod", "rtp", "maintenance", "sethome", "home", "jsmp", "afk", "daily", "shopadmin", "jsmpitem")) {
             if (getCommand(command) != null) getCommand(command).setExecutor(this);
         }
         try {
@@ -224,6 +264,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 player.setInvulnerable(previousInvulnerability.getOrDefault(player.getUniqueId(), false));
             }
         }
+        for (Player player : Bukkit.getOnlinePlayers()) saveOfflineSnapshot(player);
         saveBalances();
         saveWorth();
         for (UUID uuid : new ArrayList<>(dailyTasks.keySet())) stopDailyTracking(uuid);
@@ -420,6 +461,10 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
             if (!worth.contains(path + ".sellable")) {
                 worth.set(path + ".sellable", true);
+                changed = true;
+            }
+            if (!worth.contains(path + ".market-demand")) {
+                worth.set(path + ".market-demand", 0.0);
                 changed = true;
             }
 
@@ -718,18 +763,34 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 && !isRestrictedShopItem(material);
     }
 
+    private double marketMultiplier(Material material) {
+        double demand = worth.getDouble("items." + material.name() + ".market-demand", 0.0);
+        double step = Math.max(0.0, getConfig().getDouble("economy.market-price-step", 0.02));
+        double cap = Math.max(1.0, getConfig().getDouble("economy.market-max-multiplier", 3.0));
+        return Math.min(cap, 1.0 + Math.max(0.0, demand) * step);
+    }
+
+    private void recordMarketTrade(Material material, int amount, boolean boughtFromShop) {
+        if (material == null || amount <= 0 || isRestrictedShopItem(material)) return;
+        String path = "items." + material.name() + ".market-demand";
+        double delta = boughtFromShop ? amount : -amount;
+        worth.set(path, worth.getDouble(path, 0.0) + delta);
+    }
+
     private double buyPrice(Material material) {
         if (isRestrictedShopItem(material)) return 0;
         String path = "items." + material.name();
         if (!worth.getBoolean(path + ".sellable", false)) return 0;
-        return roundMoney(Math.max(0, worth.getDouble(path + ".buy-price", 0)));
+        double minimum = Math.max(0, worth.getDouble(path + ".buy-price", 0));
+        return roundMoney(Math.max(minimum, minimum * marketMultiplier(material)));
     }
 
     private double sellPrice(Material material) {
         if (isRestrictedShopItem(material)) return 0;
         String path = "items." + material.name();
         if (!worth.getBoolean(path + ".sellable", false)) return 0;
-        return roundMoney(Math.max(0, worth.getDouble(path + ".sell-price", 0)));
+        double minimum = Math.max(0, worth.getDouble(path + ".sell-price", 0));
+        return roundMoney(Math.max(minimum, minimum * marketMultiplier(material)));
     }
 
     private double worth(Material material) {
@@ -740,31 +801,33 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         return item != null && !item.getType().isAir() && sellPrice(item.getType()) > 0;
     }
 
-    private ShopCategory categoryFor(Material material) {
+    private String categoryFor(Material material) {
+        String configured = worth.getString("items." + material.name() + ".category");
+        if (configured != null && worth.contains("categories." + configured)) return configured;
         String n = material.name();
         if (n.contains("REDSTONE") || List.of("REPEATER", "COMPARATOR", "PISTON", "STICKY_PISTON",
                 "OBSERVER", "HOPPER", "DISPENSER", "DROPPER", "TARGET", "LEVER", "TRIPWIRE_HOOK",
                 "DAYLIGHT_DETECTOR", "NOTE_BLOCK", "SCULK_SENSOR", "CALIBRATED_SCULK_SENSOR").contains(n)
-                || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE;
+                || n.endsWith("_PRESSURE_PLATE")) return ShopCategory.REDSTONE.id;
         if (List.of("DIAMOND", "EMERALD", "RAW_IRON", "RAW_GOLD", "RAW_COPPER",
                 "IRON_INGOT", "GOLD_INGOT", "COPPER_INGOT", "COAL", "CHARCOAL",
                 "LAPIS_LAZULI", "QUARTZ", "AMETHYST_SHARD").contains(n)
-                || n.contains("DIAMOND_ORE") || n.contains("EMERALD_ORE")) return ShopCategory.GEMS;
+                || n.contains("DIAMOND_ORE") || n.contains("EMERALD_ORE")) return ShopCategory.GEMS.id;
         if (n.contains("NETHER") || n.contains("CRIMSON") || n.contains("WARPED")
                 || n.contains("BASALT") || n.contains("BLACKSTONE") || n.contains("SOUL_")
-                || n.contains("GLOWSTONE") || n.contains("MAGMA")) return ShopCategory.NETHER;
+                || n.contains("GLOWSTONE") || n.contains("MAGMA")) return ShopCategory.NETHER.id;
         if (n.contains("SEEDS") || n.contains("SAPLING") || n.contains("WHEAT") || n.contains("CARROT")
                 || n.contains("POTATO") || n.contains("BEETROOT") || n.contains("MELON") || n.contains("PUMPKIN")
                 || n.contains("SUGAR_CANE") || n.contains("BAMBOO") || n.contains("COCOA")
                 || n.contains("COMPOST") || n.contains("BONE_MEAL") || n.contains("HAY_BLOCK")
                 || n.contains("MOSS") || n.contains("FLOWER") || n.contains("TULIP") || n.contains("LILY"))
-            return ShopCategory.FARMING;
-        if (material.isEdible()) return ShopCategory.FOOD;
+            return ShopCategory.FARMING.id;
+        if (material.isEdible()) return ShopCategory.FOOD.id;
         if (List.of("CRAFTING_TABLE", "FURNACE", "BLAST_FURNACE", "SMOKER", "ANVIL", "CHIPPED_ANVIL",
                 "DAMAGED_ANVIL", "ENCHANTING_TABLE", "BREWING_STAND", "SMITHING_TABLE", "GRINDSTONE",
                 "STONECUTTER", "CARTOGRAPHY_TABLE", "FLETCHING_TABLE", "LOOM", "LECTERN", "BARREL",
-                "COMPOSTER", "ENDER_CHEST").contains(n)) return ShopCategory.WORKSTATIONS;
-        return ShopCategory.BLOCKS;
+                "COMPOSTER", "ENDER_CHEST").contains(n)) return ShopCategory.WORKSTATIONS.id;
+        return ShopCategory.MISC.id;
     }
 
     private ItemStack icon(Material material, String name, List<String> lore) {
@@ -813,14 +876,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         MenuHolder holder = new MenuHolder(MenuType.CATEGORIES, null, 0);
         Inventory inventory = Bukkit.createInventory(holder, 54, color(getConfig().getString("shop.title", "&8JSMP Shop")));
         holder.inventory = inventory;
-        int slot = 10;
-        for (ShopCategory category : ShopCategory.values()) {
-            inventory.setItem(slot, icon(category.icon, "&6" + category.label,
+        int[] categorySlots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
+        List<ShopCategory> shopCategories = getShopCategories();
+        for (int i=0;i<shopCategories.size() && i<categorySlots.length;i++) {
+            ShopCategory category=shopCategories.get(i);
+            inventory.setItem(categorySlots[i], icon(category.icon, "&6" + category.label,
                     List.of("&7" + category.description, "&eClick to browse")));
-            slot++;
-            if (slot == 17) slot = 19;
-            if (slot == 26) slot = 28;
         }
+        inventory.setItem(4, icon(Material.CHEST, "&6JSMP Shop", List.of("&7Browse the server shop")));
+        inventory.setItem(46, icon(Material.COMPASS, "&eSearch items", List.of("&7Find any item by name", "&eClick, then type your search")));
         inventory.setItem(49, icon(Material.BARRIER, "&cClose", List.of("&7Close this menu")));
         player.openInventory(inventory);
     }
@@ -828,12 +892,12 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void openShopItems(Player player, ShopCategory category, int page) {
         List<Material> items = new ArrayList<>();
         for (Material material : Material.values()) {
-            if (!isShopCatalogueItem(material) || categoryFor(material) != category) continue;
+            if (!isShopCatalogueItem(material) || !categoryFor(material).equals(category.id)) continue;
             if (buyPrice(material) <= 0) continue;
             items.add(material);
         }
         items.sort(Comparator.comparing(Material::name));
-        int pageSize = Math.max(9, Math.min(45, getConfig().getInt("shop.items-per-page", 45)));
+        int pageSize = Math.max(9, Math.min(20, getConfig().getInt("shop.items-per-page", 20)));
         int maxPage = Math.max(0, (items.size() - 1) / pageSize);
         page = Math.max(0, Math.min(page, maxPage));
 
@@ -857,13 +921,341 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                 meta.setLore(lore);
                 stack.setItemMeta(meta);
             }
-            inventory.setItem(i, stack);
+            inventory.setItem(CENTERED_SHOP_SLOTS[i], stack);
         }
 
         inventory.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of("&7Go back one page")));
         inventory.setItem(49, icon(Material.BOOK, "&6Categories", List.of("&7Return to shop categories")));
         inventory.setItem(53, icon(Material.ARROW, "&eNext page", List.of("&7Go forward one page")));
         player.openInventory(inventory);
+    }
+
+
+    private void openShopSearch(Player player, String query, int page) {
+        String normalized = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        List<Material> items = java.util.Arrays.stream(Material.values())
+                .filter(this::isShopCatalogueItem)
+                .filter(m -> buyPrice(m) > 0)
+                .filter(m -> normalized.isBlank() || m.name().toLowerCase(Locale.ROOT).contains(normalized)
+                        || pretty(m).toLowerCase(Locale.ROOT).contains(normalized))
+                .sorted(Comparator.comparing(Material::name)).toList();
+        int maxPage = Math.max(0, (items.size() - 1) / CENTERED_SHOP_SLOTS.length);
+        page = Math.max(0, Math.min(page, maxPage));
+        MenuHolder holder = new MenuHolder(MenuType.SHOP_SEARCH, null, page, null, null, false, normalized);
+        Inventory inventory = Bukkit.createInventory(holder, 54,
+                color("&8Search: " + (normalized.isBlank() ? "All items" : normalized) + " (" + (page + 1) + "/" + (maxPage + 1) + ")"));
+        holder.inventory = inventory;
+        int start = page * CENTERED_SHOP_SLOTS.length;
+        for (int i = 0; i < CENTERED_SHOP_SLOTS.length && start + i < items.size(); i++) {
+            Material material = items.get(start + i);
+            ItemStack stack = new ItemStack(material);
+            ItemMeta meta = stack.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(color("&f" + pretty(material)));
+                meta.setLore(List.of(color("&7Buy: &e" + money(buyPrice(material)) + " &8each"),
+                        color("&7Sell: &a" + money(sellPrice(material)) + " &8each"),
+                        color("&eClick to buy 1"), color("&7Shift-click to buy a stack")));
+                stack.setItemMeta(meta);
+            }
+            inventory.setItem(CENTERED_SHOP_SLOTS[i], stack);
+        }
+        inventory.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
+        inventory.setItem(46, icon(Material.COMPASS, "&eNew search", List.of("&7Type another item name")));
+        inventory.setItem(49, icon(Material.CHEST, "&6Shop categories", List.of("&7Return to categories")));
+        inventory.setItem(53, icon(Material.ARROW, "&eNext page", List.of()));
+        player.openInventory(inventory);
+    }
+
+    private void openOfflinePlayerData(Player viewer, UUID targetUuid, boolean enderChest) {
+        if (!viewer.hasPermission("jsmp.invsee")) { msg(viewer, "&cYou do not have permission."); return; }
+        String root = "offline-inventories." + targetUuid;
+        if (!playerData.contains(root + (enderChest ? ".ender" : ".inventory"))) {
+            msg(viewer, "&cNo offline inventory snapshot exists for " + displayName(targetUuid) + " yet.");
+            msg(viewer, "&7They need to join once after this update and disconnect to create a snapshot.");
+            return;
+        }
+        int size = enderChest ? 27 : 54;
+        MenuHolder holder = new MenuHolder(MenuType.OFFLINE_PLAYER_DATA, null, 0, null, targetUuid, enderChest, "");
+        Inventory inventory = Bukkit.createInventory(holder, size,
+                color("&8" + displayName(targetUuid) + (enderChest ? " - Ender Chest" : " - Inventory")));
+        holder.inventory = inventory;
+        List<?> saved = playerData.getList(root + (enderChest ? ".ender" : ".inventory"), List.of());
+        int limit = enderChest ? 27 : 41;
+        for (int i = 0; i < Math.min(limit, saved.size()); i++) {
+            Object value = saved.get(i);
+            if (value instanceof ItemStack item && !item.getType().isAir()) inventory.setItem(i, item.clone());
+        }
+        if (!enderChest) {
+            inventory.setItem(45, icon(Material.IRON_CHESTPLATE, "&6Armour slots", List.of("&7Slots 36-39 contain armour", "&7Slot 40 is the offhand")));
+            for (int i = 41; i < 45; i++) inventory.setItem(i, null);
+        }
+        msg(viewer, "&eOffline snapshot for &f" + displayName(targetUuid) + "&e. Changes save when you close this menu.");
+        viewer.openInventory(inventory);
+    }
+
+    private void saveOfflineSnapshot(Player target) {
+        String root = "offline-inventories." + target.getUniqueId();
+        playerData.set(root + ".name", target.getName());
+        playerData.set(root + ".inventory", new ArrayList<>(java.util.Arrays.asList(target.getInventory().getContents())));
+        playerData.set(root + ".ender", new ArrayList<>(java.util.Arrays.asList(target.getEnderChest().getContents())));
+        playerData.set(root + ".inventory-dirty", false);
+        playerData.set(root + ".ender-dirty", false);
+        saveDailyData();
+    }
+
+    private void applyOfflineSnapshot(Player target) {
+        String root = "offline-inventories." + target.getUniqueId();
+        if (playerData.getBoolean(root + ".inventory-dirty", false)) {
+            List<?> saved = playerData.getList(root + ".inventory", List.of());
+            ItemStack[] all = new ItemStack[41];
+            for (int i = 0; i < Math.min(all.length, saved.size()); i++)
+                if (saved.get(i) instanceof ItemStack item) all[i] = item.clone();
+            ItemStack[] storage = java.util.Arrays.copyOfRange(all, 0, 36);
+            ItemStack[] armour = java.util.Arrays.copyOfRange(all, 36, 40);
+            target.getInventory().setStorageContents(storage);
+            target.getInventory().setArmorContents(armour);
+            target.getInventory().setItemInOffHand(all[40]);
+            playerData.set(root + ".inventory-dirty", false);
+        }
+        if (playerData.getBoolean(root + ".ender-dirty", false)) {
+            List<?> saved = playerData.getList(root + ".ender", List.of());
+            ItemStack[] contents = new ItemStack[27];
+            for (int i = 0; i < Math.min(contents.length, saved.size()); i++)
+                if (saved.get(i) instanceof ItemStack item) contents[i] = item.clone();
+            target.getEnderChest().setContents(contents);
+            playerData.set(root + ".ender-dirty", false);
+        }
+        saveDailyData();
+    }
+
+    private boolean canManageShop(Player player) { return player.isOp() || player.hasPermission("jsmp.shop.admin"); }
+
+    private void openShopAdmin(Player player) {
+        if (!canManageShop(player)) { msg(player, "&cYou do not have permission."); return; }
+        MenuHolder holder = new MenuHolder(MenuType.SHOP_ADMIN, null, 0);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Shop Editor - Categories"));
+        holder.inventory = inv;
+        List<ShopCategory> categories = getShopCategories();
+        int[] slots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
+        for (int i=0;i<categories.size() && i<slots.length;i++) {
+            ShopCategory c=categories.get(i);
+            long count=java.util.Arrays.stream(Material.values()).filter(m -> isShopCatalogueItem(m) && buyPrice(m)>0 && categoryFor(m).equals(c.id)).count();
+            inv.setItem(slots[i], icon(c.icon,"&6"+c.label,List.of("&7"+c.description,"&7Items: &f"+count,"&eClick to manage")));
+        }
+        inv.setItem(45,icon(Material.EMERALD,"&a+ Create category",List.of("&7Click, then type a name in chat")));
+        inv.setItem(46,icon(Material.COMPASS,"&eSearch items",List.of("&7Find any item to edit its price","&7or remove it from the shop")));
+        inv.setItem(49,icon(Material.BOOK,"&eOpen public shop",List.of()));
+        inv.setItem(53,icon(Material.BARRIER,"&cClose",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminCategory(Player player, ShopCategory category, int page) {
+        if (!canManageShop(player) || category==null || !worth.contains("categories."+category.id)) return;
+        List<Material> items=new ArrayList<>();
+        for(Material m:Material.values()) if(isShopCatalogueItem(m)&&buyPrice(m)>0&&categoryFor(m).equals(category.id)) items.add(m);
+        items.sort(Comparator.comparing(Material::name));
+        int max=Math.max(0,(items.size()-1)/45); page=Math.max(0,Math.min(page,max));
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_CATEGORY,category,page);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Edit "+category.label+" ("+(page+1)+"/"+(max+1)+")")); holder.inventory=inv;
+        int start=page*45;
+        for(int i=0;i<45&&start+i<items.size();i++){Material m=items.get(start+i);inv.setItem(i,icon(m,"&f"+m.name(),List.of("&7Buy: &e"+money(buyPrice(m)),"&7Sell: &a"+money(sellPrice(m)),"&eClick to edit")));}
+        inv.setItem(45,icon(Material.ARROW,"&eBack",List.of()));
+        inv.setItem(46,icon(Material.ARROW,"&ePrevious page",List.of()));
+        inv.setItem(47,icon(Material.LIME_DYE,"&a+ Add items",List.of("&7Browse materials")));
+        inv.setItem(49,icon(Material.NAME_TAG,"&6Rename category",List.of("&7Enter a new name in chat")));
+        inv.setItem(51,icon(Material.BARRIER,"&cDelete category",List.of("&7Delete this category")));
+        inv.setItem(52,icon(Material.ITEM_FRAME,"&bChange category icon",List.of("&7Type a Bukkit material name in chat")));
+        inv.setItem(53,icon(Material.ARROW,"&eNext page",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminPicker(Player player, ShopCategory category, int page) {
+        if(!canManageShop(player)||category==null)return;
+        List<Material> items=new ArrayList<>();
+        for(Material m:Material.values()) if(isShopCatalogueItem(m) && (!worth.getBoolean("items."+m.name()+".sellable",false)||buyPrice(m)<=0||!categoryFor(m).equals(category.id))) items.add(m);
+        items.sort(Comparator.comparing(Material::name));
+        int max=Math.max(0,(items.size()-1)/45);page=Math.max(0,Math.min(page,max));
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_PICKER,category,page);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Add items to "+category.label));holder.inventory=inv;
+        int start=page*45;
+        for(int i=0;i<45&&start+i<items.size();i++){Material m=items.get(start+i);inv.setItem(i,icon(m,"&f"+m.name(),List.of("&eClick to add")));}
+        inv.setItem(45,icon(Material.ARROW,"&eBack",List.of()));inv.setItem(49,icon(Material.BARRIER,"&cCancel",List.of()));inv.setItem(53,icon(Material.ARROW,"&eNext page",List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminItem(Player player, ShopCategory category, Material material) {
+        if(!canManageShop(player)||category==null||material==null)return;
+        String path="items."+material.name(); double buy=buyPrice(material),sell=sellPrice(material);
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_ITEM,category,0,material);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Edit "+material.name()));holder.inventory=inv;
+        inv.setItem(10,icon(Material.REDSTONE,"&cBuy -1",List.of("&7Current: "+money(buy),"&7Shift-click: -10")));
+        inv.setItem(11,icon(Material.EMERALD,"&aBuy +1",List.of("&7Current: "+money(buy),"&7Shift-click: +10")));
+        inv.setItem(13,icon(material,"&f"+material.name(),List.of("&7Buy: &e"+money(buy),"&7Sell: &a"+money(sell))));
+        inv.setItem(15,icon(Material.RED_DYE,"&cSell -1",List.of("&7Current: "+money(sell),"&7Shift-click: -10")));
+        inv.setItem(16,icon(Material.LIME_DYE,"&aSell +1",List.of("&7Current: "+money(sell),"&7Shift-click: +10")));
+        inv.setItem(20,icon(Material.GOLD_INGOT,"&6Set buy price",List.of("&7Enter an exact amount in chat")));
+        inv.setItem(24,icon(Material.GOLD_NUGGET,"&6Set sell price",List.of("&7Enter an exact amount in chat")));
+        inv.setItem(29,icon(Material.CHEST,"&eMove category",List.of()));
+        inv.setItem(31,icon(Material.BARRIER,"&cRemove from shop",List.of()));
+        inv.setItem(33,icon(Material.COMPASS,"&eSearch another item",List.of()));
+        inv.setItem(49,icon(Material.ARROW,"&eBack",List.of()));player.openInventory(inv);
+    }
+
+    private void openShopAdminSearch(Player player, String query, int page) {
+        if (!canManageShop(player)) return;
+        String normalized = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        List<Material> items = java.util.Arrays.stream(Material.values())
+                .filter(this::isShopCatalogueItem)
+                .filter(m -> normalized.isBlank() || m.name().toLowerCase(Locale.ROOT).contains(normalized)
+                        || pretty(m).toLowerCase(Locale.ROOT).contains(normalized))
+                .sorted(Comparator.comparing(Material::name)).toList();
+        int maxPage = Math.max(0, (items.size() - 1) / 45);
+        page = Math.max(0, Math.min(page, maxPage));
+        MenuHolder holder = new MenuHolder(MenuType.SHOP_ADMIN_SEARCH, null, page, null, null, false, normalized);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Item editor search (" + (page + 1) + "/" + (maxPage + 1) + ")"));
+        holder.inventory = inv;
+        int start = page * 45;
+        for (int i = 0; i < 45 && start + i < items.size(); i++) {
+            Material material = items.get(start + i);
+            String path = "items." + material.name();
+            boolean enabled = worth.getBoolean(path + ".sellable", false) && buyPrice(material) > 0;
+            inv.setItem(i, icon(material, "&f" + pretty(material),
+                    List.of("&7Buy: &e" + money(buyPrice(material)), "&7Sell: &a" + money(sellPrice(material)),
+                            enabled ? "&aIn shop" : "&cNot in shop", "&eClick to edit")));
+        }
+        inv.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
+        inv.setItem(46, icon(Material.COMPASS, "&eNew search", List.of("&7Type another item name")));
+        inv.setItem(49, icon(Material.BARRIER, "&cClose", List.of()));
+        inv.setItem(53, icon(Material.ARROW, "&eNext page", List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openShopAdminMove(Player player, Material material) {
+        MenuHolder holder=new MenuHolder(MenuType.SHOP_ADMIN_MOVE,null,0,material);
+        Inventory inv=Bukkit.createInventory(holder,54,color("&8Move "+material.name()));holder.inventory=inv;
+        List<ShopCategory> cats=getShopCategories();int[] slots={10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34};
+        for(int i=0;i<cats.size()&&i<slots.length;i++)inv.setItem(slots[i],icon(cats.get(i).icon,"&6"+cats.get(i).label,List.of("&7Move item here")));
+        inv.setItem(49,icon(Material.ARROW,"&eCancel",List.of()));player.openInventory(inv);
+    }
+
+    private void openWorthAdmin(Player player, int page) {
+        if (!canManageShop(player)) { msg(player, "&cYou do not have permission."); return; }
+        List<Material> materials = java.util.Arrays.stream(Material.values()).filter(this::isShopCatalogueItem)
+                .sorted(Comparator.comparing(Material::name)).toList();
+        int maxPage = Math.max(0, (materials.size() - 1) / 45);
+        page = Math.max(0, Math.min(page, maxPage));
+        MenuHolder holder = new MenuHolder(MenuType.WORTH_ADMIN, null, page);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Worth Editor (" + (page + 1) + "/" + (maxPage + 1) + ")"));
+        holder.inventory = inv;
+        int start = page * 45;
+        for (int i = 0; i < 45 && start + i < materials.size(); i++) {
+            Material material = materials.get(start + i), dummy = material;
+            String path = "items." + material.name();
+            boolean enabled = worth.getBoolean(path + ".sellable", false);
+            inv.setItem(i, icon(material, "&f" + pretty(dummy), List.of("&7Buy: &e" + money(buyPrice(material)),
+                    "&7Sell: &a" + money(sellPrice(material)), enabled ? "&aEnabled" : "&cDisabled", "&eClick to edit")));
+        }
+        inv.setItem(45, icon(Material.ARROW, "&ePrevious page", List.of()));
+        inv.setItem(49, icon(Material.BARRIER, "&cClose", List.of()));
+        inv.setItem(53, icon(Material.ARROW, "&eNext page", List.of()));
+        player.openInventory(inv);
+    }
+
+    private void openWorthAdminItem(Player player, Material material) {
+        if (!canManageShop(player) || material == null || !isShopCatalogueItem(material)) return;
+        String path = "items." + material.name();
+        double buy = buyPrice(material), sell = sellPrice(material);
+        boolean enabled = worth.getBoolean(path + ".sellable", false);
+        MenuHolder holder = new MenuHolder(MenuType.WORTH_ADMIN_ITEM, null, 0, material);
+        Inventory inv = Bukkit.createInventory(holder, 54, color("&8Worth: " + pretty(material)));
+        holder.inventory = inv;
+        inv.setItem(10, icon(Material.REDSTONE, "&cBuy -1", List.of("&7Current: " + money(buy), "&7Shift-click: -10")));
+        inv.setItem(11, icon(Material.EMERALD, "&aBuy +1", List.of("&7Current: " + money(buy), "&7Shift-click: +10")));
+        inv.setItem(13, icon(material, "&f" + pretty(material), List.of("&7Buy: &e" + money(buy), "&7Sell: &a" + money(sell), enabled ? "&aEnabled" : "&cDisabled")));
+        inv.setItem(15, icon(Material.RED_DYE, "&cSell -1", List.of("&7Current: " + money(sell), "&7Shift-click: -10")));
+        inv.setItem(16, icon(Material.LIME_DYE, "&aSell +1", List.of("&7Current: " + money(sell), "&7Shift-click: +10")));
+        inv.setItem(20, icon(Material.GOLD_INGOT, "&6Set buy price", List.of("&7Click, then type a number in chat")));
+        inv.setItem(24, icon(Material.GOLD_NUGGET, "&6Set sell price", List.of("&7Click, then type a number in chat")));
+        inv.setItem(31, icon(enabled ? Material.LIME_DYE : Material.GRAY_DYE, enabled ? "&aDisable item" : "&eEnable item", List.of("&7Toggle shop trading")));
+        inv.setItem(49, icon(Material.ARROW, "&eBack to item list", List.of()));
+        player.openInventory(inv);
+    }
+
+    private void beginShopAdminInput(Player player,String mode) {
+        pendingShopAdminInput.put(player.getUniqueId(),mode);player.closeInventory();
+        msg(player,"&eType the requested value in chat. Type &ccancel &eto abort.");
+    }
+
+    @EventHandler
+    public void onShopSearchChat(AsyncChatEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        if (!pendingShopSearchInput.remove(uuid)) return;
+        event.setCancelled(true);
+        String query = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                .serialize(event.message()).trim();
+        Bukkit.getScheduler().runTask(this, () -> {
+            Player player = Bukkit.getPlayer(uuid);
+            if (player == null) return;
+            if (query.equalsIgnoreCase("cancel")) { openCategories(player); return; }
+            openShopSearch(player, query, 0);
+        });
+    }
+
+    @EventHandler
+    public void onShopAdminChat(AsyncChatEvent event) {
+        UUID uuid=event.getPlayer().getUniqueId();String mode=pendingShopAdminInput.get(uuid);if(mode==null)return;
+        event.setCancelled(true);
+        String input=net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
+        Bukkit.getScheduler().runTask(this,()->{
+            Player player=Bukkit.getPlayer(uuid);if(player==null){pendingShopAdminInput.remove(uuid);return;}
+            if(!canManageShop(player)){pendingShopAdminInput.remove(uuid);return;}
+            if(input.equalsIgnoreCase("cancel")){pendingShopAdminInput.remove(uuid);openShopAdmin(player);return;}
+            if (mode.equals("admin-search")) {
+                pendingShopAdminInput.remove(uuid);
+                openShopAdminSearch(player, input, 0);
+                return;
+            }
+            if(mode.equals("new_category")){
+                String id=input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]","-");
+                if(id.isBlank()||worth.contains("categories."+id)){msg(player,"&cInvalid or duplicate category name.");openShopAdmin(player);}
+                else{worth.set("categories."+id+".label",input);worth.set("categories."+id+".icon","CHEST");worth.set("categories."+id+".description","Custom shop category");saveWorth();msg(player,"&aCategory created.");openShopAdmin(player);}
+            } else if(mode.startsWith("rename:")){
+                String id=mode.substring(7);
+                if(worth.contains("categories."+id)){worth.set("categories."+id+".label",input);saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player);}
+            } else if (mode.startsWith("worth-buy:") || mode.startsWith("worth-sell:")
+                    || mode.startsWith("shop-buy:") || mode.startsWith("shop-sell:")) {
+                boolean buyField = mode.startsWith("worth-buy:") || mode.startsWith("shop-buy:");
+                boolean shopEditor = mode.startsWith("shop-");
+                String materialName = mode.substring(mode.indexOf(':') + 1);
+                Material material = Material.matchMaterial(materialName);
+                try {
+                    double value = Double.parseDouble(input);
+                    if (material == null || !isShopCatalogueItem(material) || !Double.isFinite(value) || value < 0) throw new IllegalArgumentException();
+                    String path = "items." + material.name();
+                    worth.set(path + (buyField ? ".buy-price" : ".sell-price"), roundMoney(value));
+                    if (value > 0 || worth.getDouble(path + (buyField ? ".sell-price" : ".buy-price"), 0) > 0) worth.set(path + ".sellable", true);
+                    saveWorth();
+                    msg(player, "&aUpdated " + pretty(material) + " " + (buyField ? "buy" : "sell") + " price to " + money(value) + ".");
+                    if (shopEditor) {
+                        ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                        if (category != null) openShopAdminItem(player, category, material);
+                    } else openWorthAdminItem(player, material);
+                } catch (IllegalArgumentException ex) {
+                    msg(player, "&cEnter a valid non-negative number. Price unchanged.");
+                    if (material != null) {
+                        if (shopEditor) {
+                            ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                            if (category != null) openShopAdminItem(player, category, material);
+                        } else openWorthAdminItem(player, material);
+                    }
+                }
+            } else if(mode.startsWith("icon:")){
+                String id=mode.substring(5);
+                try { Material iconMaterial=Material.valueOf(input.toUpperCase(Locale.ROOT)); if(!iconMaterial.isItem())throw new IllegalArgumentException(); worth.set("categories."+id+".icon",iconMaterial.name());saveWorth();ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);else openShopAdmin(player); }
+                catch(IllegalArgumentException ex){msg(player,"&cInvalid item material. Try again from the category editor.");ShopCategory c=getShopCategories().stream().filter(x->x.id.equals(id)).findFirst().orElse(null);if(c!=null)openShopAdminCategory(player,c,0);}
+            }
+            pendingShopAdminInput.remove(uuid);
+        });
     }
 
     private void openSell(Player player) {
@@ -894,6 +1286,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         decorateWorth(bought);
         Map<Integer, ItemStack> overflow = player.getInventory().addItem(bought);
         for (ItemStack extra : overflow.values()) player.getWorld().dropItemNaturally(player.getLocation(), extra);
+        recordMarketTrade(material, amount, true);
+        saveWorth();
         msg(player, "&aBought &f" + amount + "x " + pretty(material) + " &afor &e" + money(total) + "&a.");
         player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.3f);
     }
@@ -911,6 +1305,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     private void sellContents(Player player, Inventory inventory) {
         double total = 0;
         int soldStacks = 0;
+        boolean marketChanged = false;
         double multiplier = Math.max(0, getConfig().getDouble("sell.sell-multiplier", 1.0));
         if (multiplier <= 0) {
             msg(player, "&cSelling is currently disabled by the server configuration.");
@@ -922,6 +1317,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             double unit = sellPrice(item.getType());
             if (unit <= 0 || !worth.getBoolean("items." + item.getType().name() + ".sellable", false)) continue;
             total += unit * item.getAmount() * multiplier;
+            recordMarketTrade(item.getType(), item.getAmount(), false);
+            marketChanged = true;
             soldStacks++;
             inventory.setItem(slot, null);
         }
@@ -931,6 +1328,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             return;
         }
         setBalance(player.getUniqueId(), balance(player.getUniqueId()) + total);
+        if (marketChanged) saveWorth();
         msg(player, "&aSold " + soldStacks + " stack(s) for &e" + money(total) + "&a.");
         player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1f);
     }
@@ -960,6 +1358,8 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player joining = event.getPlayer();
+        sendConfiguredResourcePack(joining);
+        applyOfflineSnapshot(joining);
         remember(joining);
         startDailyTracking(joining);
         if (!joining.hasPlayedBefore() && !playerData.getBoolean("rtp.first-join-complete." + joining.getUniqueId(), false)) {
@@ -985,6 +1385,76 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
         }
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
+    }
+
+
+    private void sendConfiguredResourcePack(Player player) {
+        String url = getConfig().getString("resource-pack", "").trim();
+        if (url.isEmpty()) url = getConfig().getString("resource-pack.url", "").trim();
+        if (url.isEmpty()) {
+            getLogger().fine("No resource pack URL is configured; skipping delivery to " + player.getName() + ".");
+            return;
+        }
+        if ((!url.startsWith("https://") && !url.startsWith("http://"))
+                || !url.chars().allMatch(character -> character >= 0x21 && character <= 0x7e)) {
+            getLogger().warning("resource-pack must be a direct HTTP(S) URL containing only ASCII characters. Resource pack was not sent.");
+            return;
+        }
+
+        String configuredId = getConfig().getString("resource-pack-id", "").trim();
+        UUID packId;
+        try {
+            packId = configuredId.isEmpty()
+                    ? UUID.nameUUIDFromBytes(url.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    : UUID.fromString(configuredId);
+        } catch (IllegalArgumentException exception) {
+            getLogger().warning("resource-pack-id must be a valid UUID. Resource pack was not sent.");
+            return;
+        }
+
+        String sha1 = getConfig().getString("resource-pack-sha1", "").trim().toLowerCase(Locale.ROOT);
+        if (!sha1.isEmpty() && !sha1.matches("[0-9a-f]{40}")) {
+            getLogger().warning("resource-pack-sha1 must be exactly 40 hexadecimal characters (SHA-1). Resource pack was not sent.");
+            return;
+        }
+        String promptText = getConfig().getString("resource-pack-prompt", "").trim();
+        Component prompt = promptText.isEmpty() ? null : Component.text(promptText);
+        boolean required = getConfig().getBoolean("require-resource-pack", false);
+
+        getLogger().info("Queueing JSMP resource pack for " + player.getName()
+                + " (required=" + required + ", SHA-1 supplied=" + !sha1.isEmpty() + ").");
+        // url was normalized above, so capture an immutable copy for the scheduled task.
+        final String packUrl = url;
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!player.isOnline()) {
+                getLogger().fine("Skipped resource pack delivery because " + player.getName() + " disconnected.");
+                return;
+            }
+            try {
+                // Paper supports the UUID + URL + hexadecimal SHA-1 + Component + required overload.
+                player.setResourcePack(packId, packUrl, sha1, prompt, required);
+                getLogger().info("Resource pack request sent to " + player.getName() + ".");
+            } catch (IllegalArgumentException exception) {
+                getLogger().severe("Could not send the JSMP resource pack to " + player.getName()
+                        + ": " + exception.getMessage());
+            } catch (Exception exception) {
+                getLogger().severe("Unexpected error sending the JSMP resource pack to " + player.getName()
+                        + ": " + exception.getMessage());
+            }
+        }, 40L);
+    }
+
+    @EventHandler
+    public void onResourcePackStatus(PlayerResourcePackStatusEvent event) {
+        String playerName = event.getPlayer().getName();
+        switch (event.getStatus()) {
+            case ACCEPTED -> getLogger().info(playerName + " accepted the JSMP resource pack.");
+            case DECLINED -> getLogger().warning(playerName + " declined the JSMP resource pack.");
+            case FAILED_DOWNLOAD -> getLogger().severe(playerName + " failed to download the JSMP resource pack. Check that the URL is a direct, publicly reachable ZIP download.");
+            case SUCCESSFULLY_LOADED -> getLogger().info(playerName + " successfully loaded the JSMP resource pack.");
+            case DOWNLOADED -> getLogger().info(playerName + " downloaded the JSMP resource pack; the client is applying it.");
+            default -> getLogger().info(playerName + " resource pack status: " + event.getStatus() + ".");
+        }
     }
 
     private String dailyPath(UUID uuid) {
@@ -1320,6 +1790,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
     @EventHandler
     public void onDailyQuit(PlayerQuitEvent event) {
+        saveOfflineSnapshot(event.getPlayer());
         stopDailyTracking(event.getPlayer().getUniqueId());
     }
 
@@ -1455,7 +1926,11 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private Location getHome(Player player, String name) {
-        Map<String, Location> playerHomes = homes.get(player.getUniqueId());
+        return getHome(player.getUniqueId(), name);
+    }
+
+    private Location getHome(UUID uuid, String name) {
+        Map<String, Location> playerHomes = homes.get(uuid);
         if (playerHomes == null) return null;
         Location location = playerHomes.get(name.toLowerCase(Locale.ROOT));
         return location == null ? null : location.clone();
@@ -1692,15 +2167,178 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         }
 
         int raw = event.getRawSlot();
+
+        if (holder.type == MenuType.OFFLINE_PLAYER_DATA) {
+            int editableSlots = holder.enderChest ? 27 : 41;
+            if (raw < 0 || raw >= editableSlots || event.getClickedInventory() != top) event.setCancelled(true);
+            return;
+        }
+
+        if (holder.type == MenuType.SHOP_SEARCH) {
+            event.setCancelled(true);
+            if (raw == 45) openShopSearch(player, holder.searchQuery, holder.page - 1);
+            else if (raw == 53) openShopSearch(player, holder.searchQuery, holder.page + 1);
+            else if (raw == 49) openCategories(player);
+            else if (raw == 46) {
+                pendingShopSearchInput.add(player.getUniqueId());
+                player.closeInventory();
+                msg(player, "&eType an item name to search, or type &ccancel&e.");
+            } else if (raw >= 0 && raw < 45) {
+                ItemStack clicked = top.getItem(raw);
+                if (clicked != null && !clicked.getType().isAir()) {
+                    int amount = event.isShiftClick() ? clicked.getType().getMaxStackSize() : 1;
+                    buy(player, clicked.getType(), amount);
+                    openShopSearch(player, holder.searchQuery, holder.page);
+                }
+            }
+            return;
+        }
+
+        if (holder.type == MenuType.WORTH_ADMIN || holder.type == MenuType.WORTH_ADMIN_ITEM) {
+            event.setCancelled(true);
+            if (!canManageShop(player)) { player.closeInventory(); msg(player, "&cYou do not have permission."); return; }
+            if (holder.type == MenuType.WORTH_ADMIN) {
+                if (raw == 45) openWorthAdmin(player, holder.page - 1);
+                else if (raw == 53) openWorthAdmin(player, holder.page + 1);
+                else if (raw == 49) player.closeInventory();
+                else if (raw >= 0 && raw < 45) {
+                    ItemStack clicked = top.getItem(raw);
+                    if (clicked != null && !clicked.getType().isAir()) openWorthAdminItem(player, clicked.getType());
+                }
+                return;
+            }
+            Material material = holder.material;
+            String path = "items." + material.name();
+            if (raw == 49) { openWorthAdmin(player, 0); return; }
+            if (raw == 20 || raw == 24) {
+                beginShopAdminInput(player, (raw == 20 ? "worth-buy:" : "worth-sell:") + material.name());
+                msg(player, "&eEnter the new " + (raw == 20 ? "buy" : "sell") + " price for " + pretty(material) + ".");
+                return;
+            }
+            if (raw == 31) {
+                boolean enabled = !worth.getBoolean(path + ".sellable", false);
+                worth.set(path + ".sellable", enabled); saveWorth();
+                msg(player, enabled ? "&aItem enabled." : "&eItem disabled.");
+                openWorthAdminItem(player, material); return;
+            }
+            if (raw == 10 || raw == 11 || raw == 15 || raw == 16) {
+                double step = event.isShiftClick() ? 10.0 : 1.0;
+                boolean buyField = raw == 10 || raw == 11;
+                String key = buyField ? ".buy-price" : ".sell-price";
+                double next = Math.max(0, worth.getDouble(path + key, 0) + ((raw == 10 || raw == 15) ? -step : step));
+                worth.set(path + key, roundMoney(next)); worth.set(path + ".sellable", true);
+                saveWorth(); openWorthAdminItem(player, material);
+            }
+            return;
+        }
+
+        if (holder.type == MenuType.SHOP_ADMIN || holder.type == MenuType.SHOP_ADMIN_CATEGORY
+                || holder.type == MenuType.SHOP_ADMIN_PICKER || holder.type == MenuType.SHOP_ADMIN_ITEM
+                || holder.type == MenuType.SHOP_ADMIN_MOVE) {
+            event.setCancelled(true);
+            if (!canManageShop(player)) { player.closeInventory(); msg(player, "&cYour shop editor permission was removed."); return; }
+            if (holder.type == MenuType.SHOP_ADMIN) {
+                if (raw == 45) { beginShopAdminInput(player, "new_category"); return; }
+                if (raw == 46) {
+                    pendingShopAdminInput.put(player.getUniqueId(), "admin-search");
+                    player.closeInventory();
+                    msg(player, "&eType an item name to search, or type &ccancel&e.");
+                    return;
+                }
+                if (raw == 49) { openCategories(player); return; }
+                if (raw == 53) { player.closeInventory(); return; }
+                int idx=categorySlotIndex(raw);List<ShopCategory> cats=getShopCategories();
+                if(idx>=0&&idx<cats.size())openShopAdminCategory(player,cats.get(idx),0);
+                return;
+            }
+            if (holder.type == MenuType.SHOP_ADMIN_CATEGORY) {
+                if(raw==45){openShopAdmin(player);return;}
+                if(raw==47){openShopAdminPicker(player,holder.category,0);return;}
+                if(raw==49){beginShopAdminInput(player,"rename:"+holder.category.id);return;}
+                if(raw==52){beginShopAdminInput(player,"icon:"+holder.category.id);return;}
+                if(raw==51){
+                    if(getShopCategories().size()<=1){msg(player,"&cKeep at least one category.");return;}
+                    worth.set("categories."+holder.category.id,null);
+                    ConfigurationSection section=worth.getConfigurationSection("items");
+                    if(section!=null)for(String key:section.getKeys(false))if(holder.category.id.equals(worth.getString("items."+key+".category")))worth.set("items."+key+".category",null);
+                    saveWorth();msg(player,"&aCategory deleted.");openShopAdmin(player);return;
+                }
+                if(raw==46){openShopAdminCategory(player,holder.category,holder.page-1);return;}
+                if(raw==53){openShopAdminCategory(player,holder.category,holder.page+1);return;}
+                if(raw>=0&&raw<45){ItemStack clicked=top.getItem(raw);if(clicked!=null&&!clicked.getType().isAir())openShopAdminItem(player,holder.category,clicked.getType());}
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_PICKER){
+                if(raw==45||raw==49){openShopAdminCategory(player,holder.category,0);return;}
+                if(raw==53){openShopAdminPicker(player,holder.category,holder.page+1);return;}
+                if(raw>=0&&raw<45){
+                    ItemStack clicked=top.getItem(raw);if(clicked==null||clicked.getType().isAir())return;
+                    Material material=clicked.getType();String path="items."+material.name();
+                    double base=Math.max(1.0,defaultWorth(material));
+                    worth.set(path+".buy-price",roundMoney(base));
+                    worth.set(path+".sell-price",roundMoney(base*getConfig().getDouble("economy.default-sell-rate",0.5)));
+                    worth.set(path+".sellable",true);worth.set(path+".category",holder.category.id);
+                    saveWorth();msg(player,"&aAdded "+material.name()+" to "+holder.category.label+".");openShopAdminCategory(player,holder.category,0);
+                }
+                return;
+            }
+            if (holder.type == MenuType.SHOP_ADMIN_SEARCH) {
+                if (raw == 45) { openShopAdminSearch(player, holder.searchQuery, holder.page - 1); return; }
+                if (raw == 53) { openShopAdminSearch(player, holder.searchQuery, holder.page + 1); return; }
+                if (raw == 46) {
+                    pendingShopAdminInput.put(player.getUniqueId(), "admin-search");
+                    player.closeInventory();
+                    msg(player, "&eType an item name to search, or type &ccancel&e.");
+                    return;
+                }
+                if (raw == 49) { openShopAdmin(player); return; }
+                if (raw >= 0 && raw < 45) {
+                    ItemStack clicked = top.getItem(raw);
+                    if (clicked != null && !clicked.getType().isAir()) {
+                        Material material = clicked.getType();
+                        ShopCategory category = getShopCategories().stream().filter(c -> c.id.equals(categoryFor(material))).findFirst().orElse(null);
+                        if (category != null) openShopAdminItem(player, category, material);
+                    }
+                }
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_ITEM){
+                Material material=holder.material;String path="items."+material.name();double step=event.isShiftClick()?10.0:1.0;
+                if(raw==49){openShopAdminCategory(player,holder.category,holder.page);return;}
+                if(raw==20 || raw==24){beginShopAdminInput(player,(raw==20?"shop-buy:":"shop-sell:")+material.name());msg(player,"&eEnter the new "+(raw==20?"buy":"sell")+" price for "+pretty(material)+".");return;}
+                if(raw==33){pendingShopAdminInput.put(player.getUniqueId(),"admin-search");player.closeInventory();msg(player,"&eType an item name to search, or type &ccancel&e.");return;}
+                if(raw==29){openShopAdminMove(player,material);return;}
+                if(raw==31){worth.set(path+".buy-price",0.0);worth.set(path+".sell-price",0.0);worth.set(path+".sellable",false);saveWorth();msg(player,"&aRemoved "+material.name()+" from the shop.");openShopAdminCategory(player,holder.category,0);return;}
+                if(raw==10||raw==11||raw==15||raw==16){
+                    String key=(raw==10||raw==11)?".buy-price":".sell-price";
+                    double next=worth.getDouble(path+key,0)+((raw==10||raw==15)?-step:step);
+                    worth.set(path+key,roundMoney(Math.max(0,next)));saveWorth();openShopAdminItem(player,holder.category,material);
+                }
+                return;
+            }
+            if(holder.type==MenuType.SHOP_ADMIN_MOVE){
+                if(raw==49){ShopCategory current=getShopCategories().stream().filter(c->c.id.equals(worth.getString("items."+holder.material.name()+".category"))).findFirst().orElse(null);if(current!=null)openShopAdminItem(player,current,holder.material);else openShopAdmin(player);return;}
+                int idx=categorySlotIndex(raw);List<ShopCategory> cats=getShopCategories();
+                if(idx>=0&&idx<cats.size()){worth.set("items."+holder.material.name()+".category",cats.get(idx).id);saveWorth();msg(player,"&aMoved "+holder.material.name()+" to "+cats.get(idx).label+".");openShopAdminCategory(player,cats.get(idx),0);}
+                return;
+            }
+        }
+
         if (holder.type == MenuType.CATEGORIES) {
             event.setCancelled(true);
             if (raw == 49) {
                 player.closeInventory();
                 return;
             }
-            ShopCategory[] categories = ShopCategory.values();
+            if (raw == 46) {
+                pendingShopSearchInput.add(player.getUniqueId());
+                player.closeInventory();
+                msg(player, "&eType an item name to search, or type &ccancel&e.");
+                return;
+            }
+            List<ShopCategory> categories = getShopCategories();
             int index = categorySlotIndex(raw);
-            if (index >= 0 && index < categories.length) openShopItems(player, categories[index], 0);
+            if (index >= 0 && index < categories.size()) openShopItems(player, categories.get(index), 0);
             return;
         }
 
@@ -1772,7 +2410,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     }
 
     private int categorySlotIndex(int raw) {
-        int[] slots = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21};
+        int[] slots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
         for (int i = 0; i < slots.length; i++) if (slots[i] == raw) return i;
         return -1;
     }
@@ -1782,7 +2420,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
         if (!(event.getWhoClicked() instanceof Player player)) return;
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof MenuHolder holder)) return;
-        if (holder.type == MenuType.DAILY) {
+        if (holder.type == MenuType.OFFLINE_PLAYER_DATA) {
+            int editableSlots = holder.enderChest ? 27 : 41;
+            for (int raw : event.getRawSlots()) {
+                if (raw < 0 || raw >= editableSlots) { event.setCancelled(true); return; }
+            }
+            return;
+        }
+        if (holder.type == MenuType.DAILY || holder.type == MenuType.SHOP_SEARCH || holder.type == MenuType.SHOP_ADMIN || holder.type == MenuType.SHOP_ADMIN_CATEGORY
+                || holder.type == MenuType.SHOP_ADMIN_PICKER || holder.type == MenuType.SHOP_ADMIN_ITEM || holder.type == MenuType.SHOP_ADMIN_MOVE) {
             event.setCancelled(true);
             return;
         }
@@ -1803,7 +2449,32 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public void onInventoryClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
         Inventory top = event.getInventory();
-        if (!(top.getHolder() instanceof MenuHolder holder) || holder.type != MenuType.SELL) return;
+        if (!(top.getHolder() instanceof MenuHolder holder)) return;
+        if (holder.type == MenuType.OFFLINE_PLAYER_DATA) {
+            String root = "offline-inventories." + holder.targetUuid;
+            if (holder.enderChest) {
+                List<ItemStack> contents = new ArrayList<>();
+                for (int slot = 0; slot < 27; slot++) {
+                    ItemStack item = top.getItem(slot);
+                    contents.add(item == null || item.getType().isAir() ? null : item.clone());
+                }
+                playerData.set(root + ".ender", contents);
+                playerData.set(root + ".ender-dirty", true);
+            } else {
+                List<ItemStack> contents = new ArrayList<>();
+                for (int slot = 0; slot < 41; slot++) {
+                    ItemStack item = top.getItem(slot);
+                    contents.add(item == null || item.getType().isAir() ? null : item.clone());
+                }
+                playerData.set(root + ".inventory", contents);
+                playerData.set(root + ".inventory-dirty", true);
+            }
+            Player onlineTarget = Bukkit.getPlayer(holder.targetUuid);
+            if (onlineTarget != null) applyOfflineSnapshot(onlineTarget);
+            else saveDailyData();
+            return;
+        }
+        if (holder.type != MenuType.SELL) return;
         for (int slot = 0; slot < 45; slot++) {
             ItemStack item = top.getItem(slot);
             if (item == null || item.getType().isAir()) continue;
@@ -1817,6 +2488,118 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String name = command.getName().toLowerCase(Locale.ROOT);
         switch (name) {
+            case "worth" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can check item worth."); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("admin")) {
+                    if (!canManageShop(player)) { msg(player, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
+                    openWorthAdmin(player, 0); return true;
+                }
+                if (args.length != 0) { msg(player, "&cUsage: /worth [admin]"); return true; }
+                ItemStack held = player.getInventory().getItemInMainHand();
+                if (held == null || held.getType().isAir()) { msg(player, "&cHold an item in your main hand first."); return true; }
+                Material material = held.getType();
+                String path = "items." + material.name();
+                boolean enabled = worth.getBoolean(path + ".sellable", false) && !isRestrictedShopItem(material);
+                double buy = enabled ? buyPrice(material) : 0, sell = enabled ? sellPrice(material) : 0;
+                int amount = held.getAmount();
+                msg(player, "&6&lWorth: &f" + pretty(material) + " &7(x" + amount + ")");
+                msg(player, "&7Buy: &e" + money(buy) + " &8each &7| &e" + money(buy * amount) + " &8stack");
+                msg(player, "&7Sell: &a" + money(sell) + " &8each &7| &a" + money(sell * amount) + " &8stack");
+                if (!enabled) msg(player, "&cThis item is not enabled for shop trading.");
+                return true;
+            }
+            case "shopadmin" -> {
+                if (!sender.hasPermission("jsmp.shop.admin")) { msg(sender, "&cYou need jsmp.shop.admin (OP by default)."); return true; }
+                if (args.length == 0) {
+                    if (sender instanceof Player adminPlayer) { openShopAdmin(adminPlayer); return true; }
+                    msg(sender, "&6Shop admin commands:");
+                    msg(sender, "&e/shopadmin category add <id> <icon> <label> [description]");
+                    msg(sender, "&e/shopadmin category remove <id>");
+                    msg(sender, "&e/shopadmin item add <MATERIAL> <category> <buy> <sell>");
+                    msg(sender, "&e/shopadmin item remove <MATERIAL>");
+                    msg(sender, "&e/shopadmin item move <MATERIAL> <category>");
+                    msg(sender, "&e/shopadmin item price <MATERIAL> <buy> <sell>");
+                    msg(sender, "&7Category IDs: " + getShopCategories().stream().map(c -> c.id).collect(Collectors.joining(", ")));
+                    return true;
+                }
+                try {
+                    if (args.length >= 3 && args[0].equalsIgnoreCase("category") && args[1].equalsIgnoreCase("add")) {
+                        String id = args[2].toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]", "");
+                        if (id.isBlank() || worth.contains("categories." + id)) { msg(sender, "&cInvalid or existing category ID."); return true; }
+                        Material icon = Material.valueOf(args.length >= 4 ? args[3].toUpperCase(Locale.ROOT) : "CHEST");
+                        String categoryLabel = args.length >= 5 ? args[4].replace('_', ' ') : id;
+                        String description = args.length >= 6 ? String.join(" ", java.util.Arrays.copyOfRange(args, 5, args.length)) : "Custom shop category";
+                        worth.set("categories." + id + ".label", categoryLabel);
+                        worth.set("categories." + id + ".icon", icon.name());
+                        worth.set("categories." + id + ".description", description);
+                        saveWorth(); msg(sender, "&aCreated shop category &f" + id + "&a."); return true;
+                    }
+                    if (args.length == 3 && args[0].equalsIgnoreCase("category") && args[1].equalsIgnoreCase("remove")) {
+                        String id = args[2].toLowerCase(Locale.ROOT);
+                        if (!worth.contains("categories." + id)) { msg(sender, "&cCategory not found."); return true; }
+                        worth.set("categories." + id, null);
+                        ConfigurationSection items = worth.getConfigurationSection("items");
+                        if (items != null) for (String key : items.getKeys(false))
+                            if (id.equalsIgnoreCase(worth.getString("items." + key + ".category"))) worth.set("items." + key + ".category", null);
+                        saveWorth(); msg(sender, "&aRemoved category. Its items now use automatic categories."); return true;
+                    }
+                    if (args.length >= 3 && args[0].equalsIgnoreCase("item")) {
+                        Material material = Material.valueOf(args[2].toUpperCase(Locale.ROOT));
+                        String path = "items." + material.name();
+                        if (args[1].equalsIgnoreCase("remove") && args.length == 3) {
+                            worth.set(path + ".buy-price", 0.0); worth.set(path + ".sell-price", 0.0); worth.set(path + ".sellable", false); worth.set(path + ".category", null); saveWorth(); msg(sender, "&aRemoved " + material.name() + " from the shop. It remains disabled in worth.yml so automatic catalogue generation will not re-add it."); return true;
+                        }
+                        if (args[1].equalsIgnoreCase("move") && args.length == 4) {
+                            String category = args[3].toLowerCase(Locale.ROOT);
+                            if (!worth.contains("categories." + category)) { msg(sender, "&cUnknown category."); return true; }
+                            worth.set(path + ".category", category); saveWorth(); msg(sender, "&aMoved " + material.name() + " to " + category + "."); return true;
+                        }
+                        if ((args[1].equalsIgnoreCase("add") && args.length == 6) || (args[1].equalsIgnoreCase("price") && args.length == 5)) {
+                            String category = args[1].equalsIgnoreCase("add") ? args[3].toLowerCase(Locale.ROOT) : worth.getString(path + ".category", categoryFor(material));
+                            int offset = args[1].equalsIgnoreCase("add") ? 4 : 3;
+                            if (!worth.contains("categories." + category)) { msg(sender, "&cUnknown category."); return true; }
+                            double buy = Double.parseDouble(args[offset]), sell = Double.parseDouble(args[offset + 1]);
+                            if (!Double.isFinite(buy) || !Double.isFinite(sell) || buy <= 0 || sell < 0) { msg(sender, "&cBuy must be above 0 and sell cannot be negative."); return true; }
+                            worth.set(path + ".buy-price", roundMoney(buy)); worth.set(path + ".sell-price", roundMoney(sell));
+                            worth.set(path + ".sellable", true); worth.set(path + ".category", category);
+                            saveWorth(); msg(sender, "&aSaved " + material.name() + " in " + category + " (buy " + money(buy) + ", sell " + money(sell) + ")."); return true;
+                        }
+                    }
+                } catch (IllegalArgumentException ex) {
+                    msg(sender, "&cInvalid material, icon, or number. Use exact Bukkit material names.");
+                    return true;
+                }
+                msg(sender, "&cInvalid syntax. Use /shopadmin for help."); return true;
+            }
+            case "jsmpitem" -> {
+                if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can receive custom items."); return true; }
+                if (!player.hasPermission("jsmp.admin")) { msg(player, "&cYou do not have permission."); return true; }
+                if (args.length < 1 || args.length > 2) { msg(player, "&cUsage: /jsmpitem <ddr3|ddr4|ddr5> [amount]"); return true; }
+                String id = args[0].toLowerCase(Locale.ROOT);
+                Material base;
+                String display;
+                switch (id) {
+                    case "ddr3" -> { base = Material.PAPER; display = "DDR3 RAM"; }
+                    case "ddr4" -> { base = Material.IRON_INGOT; display = "DDR4 RAM"; }
+                    case "ddr5" -> { base = Material.GOLD_INGOT; display = "DDR5 RAM"; }
+                    default -> { msg(player, "&cChoose ddr3, ddr4 or ddr5."); return true; }
+                }
+                int amount = 1;
+                try { if (args.length == 2) amount = Integer.parseInt(args[1]); }
+                catch (NumberFormatException ex) { msg(player, "&cAmount must be a whole number."); return true; }
+                amount = Math.max(1, Math.min(64, amount));
+                ItemStack ram = new ItemStack(base, amount);
+                ItemMeta meta = ram.getItemMeta();
+                meta.setDisplayName(color("&b&l" + display));
+                meta.setLore(List.of(color("&7A computer memory module."), color("&8JSMP custom hardware item")));
+                meta.setItemModel(new NamespacedKey(this, id + "_ram"));
+                meta.getPersistentDataContainer().set(customItemKey, PersistentDataType.STRING, id + "_ram");
+                ram.setItemMeta(meta);
+                Map<Integer, ItemStack> overflow = player.getInventory().addItem(ram);
+                for (ItemStack extra : overflow.values()) player.getWorld().dropItemNaturally(player.getLocation(), extra);
+                msg(player, "&aGiven &f" + amount + "x " + display + "&a. Resource-pack model key: &ejsmp:" + id + "_ram");
+                return true;
+            }
             case "shop" -> {
                 if (!sender.hasPermission("jsmp.shop")) { msg(sender, "&cYou do not have permission."); return true; }
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can open the shop."); return true; }
@@ -1838,14 +2621,15 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
                     return true;
                 }
                 Player target = Bukkit.getPlayerExact(args[0]);
-                if (target == null) { msg(viewer, "&cThat player must be online."); return true; }
-                if (name.equals("invsee")) {
-                    viewer.openInventory(target.getInventory());
-                    msg(viewer, "&aViewing &f" + target.getName() + "&a's inventory. Changes are saved live.");
-                } else {
-                    viewer.openInventory(target.getEnderChest());
-                    msg(viewer, "&aViewing &f" + target.getName() + "&a's ender chest. Changes are saved live.");
+                boolean ender = name.equals("ecsee");
+                if (target != null) {
+                    viewer.openInventory(ender ? target.getEnderChest() : target.getInventory());
+                    msg(viewer, "&aViewing &f" + target.getName() + "&a's " + (ender ? "ender chest" : "inventory") + ". Changes save live.");
+                    return true;
                 }
+                UUID targetUuid = findPlayer(args[0]);
+                if (targetUuid == null) { msg(viewer, "&cPlayer not found. They must have joined this server before."); return true; }
+                openOfflinePlayerData(viewer, targetUuid, ender);
                 return true;
             }
             case "daily" -> {
@@ -1884,6 +2668,18 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             case "home" -> {
                 if (!(sender instanceof Player player)) { msg(sender, "&cOnly players can use homes."); return true; }
                 if (!sender.hasPermission("jsmp.home")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length == 2) {
+                    if (!player.hasPermission("jsmp.home.admin")) { msg(player, "&cYou need jsmp.home.admin to visit other players' homes."); return true; }
+                    UUID targetUuid = findPlayer(args[0]);
+                    Location targetHome = targetUuid == null ? null : getHome(targetUuid, args[1]);
+                    if (targetHome == null) { msg(player, "&cThat player or home could not be found, or its world is not loaded."); return true; }
+                    String targetName = displayName(targetUuid);
+                    startTeleportCountdown(player, targetName + "'s home " + args[1], () -> {
+                        Location destination = getHome(targetUuid, args[1]);
+                        return destination != null && player.teleport(destination);
+                    });
+                    return true;
+                }
                 if (args.length == 0) {
                     Map<String, Location> playerHomes = homes.get(player.getUniqueId());
                     if (playerHomes == null || playerHomes.isEmpty()) {
@@ -1909,8 +2705,17 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
             case "jsmp" -> {
                 if (!sender.hasPermission("jsmp.admin")) { msg(sender, "&cYou do not have permission."); return true; }
+                if (args.length == 1 && args[0].equalsIgnoreCase("pack")) {
+                    if (!(sender instanceof Player player)) {
+                        msg(sender, "&cRun /jsmp pack in-game to resend the resource pack.");
+                        return true;
+                    }
+                    sendConfiguredResourcePack(player);
+                    msg(player, "&aQueued the JSMP resource pack. Check the server console for delivery status.");
+                    return true;
+                }
                 if (args.length != 1 || !args[0].equalsIgnoreCase("reload")) {
-                    msg(sender, "&cUsage: /jsmp reload");
+                    msg(sender, "&cUsage: /jsmp reload or /jsmp pack");
                     return true;
                 }
                 reloadConfig();

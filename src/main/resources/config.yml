@@ -1,3 +1,12 @@
+# Server resource pack settings (equivalent to the matching server.properties options).
+# Use a direct HTTPS link to the .zip file, not a GitHub HTML page.
+# Leave url blank to disable automatic delivery.
+require-resource-pack: false
+resource-pack: ""
+resource-pack-id: ""
+resource-pack-prompt: ""
+resource-pack-sha1: ""
+
 currency:
   symbol: "$"
   starting-balance: 100.00
@@ -35,6 +44,10 @@ economy:
   recipe-price-premium: 0.20
   baltop-size: 10
   minimum-payment: 0.01
+  # Each net item bought adds this much to the market price multiplier.
+  # Selling items reduces demand again, but prices never fall below worth.yml base prices.
+  market-price-step: 0.02
+  market-max-multiplier: 3.0
 
 messages:
   prefix: "&8[&6JSMP&8] &r"
