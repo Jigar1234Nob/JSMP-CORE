@@ -77,7 +77,7 @@ commands:
     usage: /sethome <name>
   home:
     description: Teleports to your home or an authorised player's home.
-    usage: /home <name> [player] <home>
+    usage: /home <name> OR /home <player> <name>
   jsmpitem:
     description: Gives a custom DDR RAM item for resource-pack testing.
     usage: /jsmpitem <ddr3|ddr4|ddr5> [amount]
