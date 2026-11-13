@@ -1307,6 +1307,7 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player joining = event.getPlayer();
+        sendConfiguredResourcePack(joining);
         applyOfflineSnapshot(joining);
         remember(joining);
         startDailyTracking(joining);
@@ -1333,6 +1334,25 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
             }
         }
         Bukkit.getScheduler().runTask(this, () -> decorateInventory(joining));
+    }
+
+
+    private void sendConfiguredResourcePack(Player player) {
+        String url = getConfig().getString("resource-pack.url", "").trim();
+        if (url.isEmpty()) return;
+        if (!url.startsWith("https://") && !url.startsWith("http://")) {
+            getLogger().warning("resource-pack.url must be a direct HTTP(S) download URL. Resource pack was not sent.");
+            return;
+        }
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!player.isOnline()) return;
+            try {
+                player.setResourcePack(url);
+                getLogger().info("Sent the configured resource pack to " + player.getName() + ".");
+            } catch (IllegalArgumentException exception) {
+                getLogger().warning("Could not send the resource pack to " + player.getName() + ": " + exception.getMessage());
+            }
+        }, 20L);
     }
 
     private String dailyPath(UUID uuid) {

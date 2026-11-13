@@ -1,3 +1,8 @@
+# Optional server resource pack. Leave the URL blank to disable automatic delivery.
+# Use a direct HTTPS link to the .zip file, not a GitHub HTML page.
+resource-pack:
+  url: ""
+
 currency:
   symbol: "$"
   starting-balance: 100.00
