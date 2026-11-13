@@ -1,7 +1,11 @@
-# Optional server resource pack. Leave the URL blank to disable automatic delivery.
+# Server resource pack settings (equivalent to the matching server.properties options).
 # Use a direct HTTPS link to the .zip file, not a GitHub HTML page.
-resource-pack:
-  url: ""
+# Leave url blank to disable automatic delivery.
+require-resource-pack: false
+resource-pack: ""
+resource-pack-id: ""
+resource-pack-prompt: ""
+resource-pack-sha1: ""
 
 currency:
   symbol: "$"

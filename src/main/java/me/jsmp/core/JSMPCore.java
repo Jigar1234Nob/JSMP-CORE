@@ -1388,17 +1388,39 @@ public final class JSMPCore extends JavaPlugin implements Listener, CommandExecu
 
 
     private void sendConfiguredResourcePack(Player player) {
-        String url = getConfig().getString("resource-pack.url", "").trim();
+        String url = getConfig().getString("resource-pack", "").trim();
         if (url.isEmpty()) return;
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
-            getLogger().warning("resource-pack.url must be a direct HTTP(S) download URL. Resource pack was not sent.");
+            getLogger().warning("resource-pack must be a direct HTTP(S) download URL. Resource pack was not sent.");
             return;
         }
+
+        String configuredId = getConfig().getString("resource-pack-id", "").trim();
+        UUID packId;
+        try {
+            packId = configuredId.isEmpty()
+                    ? UUID.nameUUIDFromBytes(url.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    : UUID.fromString(configuredId);
+        } catch (IllegalArgumentException exception) {
+            getLogger().warning("resource-pack-id must be a valid UUID. Resource pack was not sent.");
+            return;
+        }
+
+        String sha1 = getConfig().getString("resource-pack-sha1", "").trim().toLowerCase(Locale.ROOT);
+        if (!sha1.isEmpty() && !sha1.matches("[0-9a-f]{40}")) {
+            getLogger().warning("resource-pack-sha1 must be exactly 40 hexadecimal characters (SHA-1). Resource pack was not sent.");
+            return;
+        }
+        String promptText = getConfig().getString("resource-pack-prompt", "").trim();
+        Component prompt = promptText.isEmpty() ? null : Component.text(promptText);
+        boolean required = getConfig().getBoolean("require-resource-pack", false);
+
         Bukkit.getScheduler().runTaskLater(this, () -> {
             if (!player.isOnline()) return;
             try {
-                player.setResourcePack(url);
-                getLogger().info("Sent the configured resource pack to " + player.getName() + ".");
+                player.setResourcePack(packId, url, sha1.isEmpty() ? null : sha1, prompt, required);
+                getLogger().info("Sent the configured resource pack to " + player.getName()
+                        + (required ? " (required)." : "."));
             } catch (IllegalArgumentException exception) {
                 getLogger().warning("Could not send the resource pack to " + player.getName() + ": " + exception.getMessage());
             }
