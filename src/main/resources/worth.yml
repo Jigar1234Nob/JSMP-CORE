@@ -2,6 +2,8 @@
 # Missing survival items are added automatically using vanilla recipe costs and the configured shop premium.
 # Untouched prices from older generated catalogues are migrated once; owner-customised prices are preserved.
 # Sell prices default to 35% of buy prices. Set sellable: false to disable an item.
+# These configured prices are the permanent minimums. Shop purchases raise prices; sales lower them back toward these minimums.
+# Per-item market-demand counters are created automatically and saved here.
 items:
   DIAMOND:
     buy-price: 90000.0
